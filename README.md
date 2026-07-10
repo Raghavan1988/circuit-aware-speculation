@@ -79,4 +79,4 @@ Agents should first read [AGENTS.md](AGENTS.md), then select an unblocked item f
 
 ## License and citation
 
-Code and documentation are released under the [MIT License](LICENSE). Citation metadata is provided in [CITATION.cff](CITATION.cff); update authorship before public release.
+Code and documentation are released under the [Apache License 2.0](LICENSE). Citation metadata is provided in [CITATION.cff](CITATION.cff); update authorship before public release.

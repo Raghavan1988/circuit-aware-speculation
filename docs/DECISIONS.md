@@ -49,3 +49,11 @@ Use dated entries with context, decision, alternatives, and consequences. Do not
 - **Decision:** Initialize a local Git repository only.
 - **Alternatives:** Immediately publish a remote repository.
 - **Consequences:** Remote creation and pushing require a separate explicit task.
+
+## D007 — Project license
+
+- **Date:** 2026-07-10
+- **Context:** The GitHub repository was initialized with Apache License 2.0, and the repository owner selected it as the intended project license.
+- **Decision:** License the canonical repository under Apache-2.0 rather than MIT.
+- **Alternatives:** Retain the initially drafted MIT license.
+- **Consequences:** The remote Apache license is authoritative; README and citation metadata use the SPDX identifier `Apache-2.0`.
