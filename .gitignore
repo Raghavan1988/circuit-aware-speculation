@@ -1,0 +1,44 @@
+# Environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Secrets and local provider state
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Models, datasets, and experiment artifacts
+models/
+data/raw/
+artifacts/
+results/raw/
+checkpoints/
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.npy
+*.npz
+*.parquet
+
+# Generated manuscript files
+paper/*.aux
+paper/*.bbl
+paper/*.blg
+paper/*.log
+paper/*.out
+paper/*.toc
+paper/*.synctex.gz
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+*~
