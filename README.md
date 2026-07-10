@@ -2,7 +2,7 @@
 
 **Working title:** *Circuit-Aware Speculation: Mechanistic Signals for Compute-Optimal Speculative Decoding*
 
-This is the canonical research repository for a prospective TMLR submission on a focused question:
+This is the canonical research repository for a prospective journal submission on a focused question:
 
 > Where does information about future target rejection emerge inside a speculative draft model, and can that information support compute-optimal speculation control under distribution shift?
 
@@ -26,7 +26,7 @@ The older `/home/raghavan/13_Raghavan_Content_Aware_Speculation_Control` project
 - **Replication:** a tokenizer-compatible Llama 8B/1B pair; use a second Qwen size ratio if compatibility blocks reliable evaluation.
 - **Actions:** skip speculation or draft `{1, 2, 3, 4, 6, 8}` tokens.
 - **Workloads:** code, math, chat, and one held-out domain.
-- **Baselines:** target-only, all fixed lengths, best global and per-domain fixed policies, entropy, acceptance history, BanditSpec-style adaptation, a learned output-confidence predictor, the proposed circuit-aware controller, and an offline oracle.
+- **Baselines:** target-only, all fixed lengths, best global and per-domain fixed policies, entropy, acceptance history, BanditSpec-style adaptation, a SpecDec++-style learned acceptance head, the proposed circuit-aware controller, and an offline oracle.
 - **Systems outcomes:** net wall-clock speedup, TPOT, throughput, wasted draft tokens, latency regret, memory, and controller overhead.
 - **Mechanistic outcomes:** layerwise predictive performance, calibration, cross-domain transfer, token-category behavior, and controlled-intervention effect sizes.
 
@@ -60,7 +60,7 @@ Probe accuracy alone is not causal evidence. Negative results and failed interve
 4. Implement compute-optimal selective speculation, including the skip action.
 5. Run interventions, traffic shifts, and begin replication.
 6. Complete essential ablations and produce artifact-derived figures.
-7. Reproduce the primary table from a clean environment and assemble an anonymous TMLR draft.
+7. Reproduce the primary table from a clean environment and assemble an anonymous manuscript draft.
 
 This is a draft milestone, not a hard submission deadline. Submission requires the evidence gate in [the research specification](docs/RESEARCH_SPEC.md).
 
@@ -76,6 +76,7 @@ Agents should first read [AGENTS.md](AGENTS.md), then select an unblocked item f
 - [Issue backlog](docs/ISSUE_BACKLOG.md): dependency-aware implementation work.
 - [Claims ledger](docs/CLAIMS_LEDGER.md): evidence status for every proposed conclusion.
 - [Decision log](docs/DECISIONS.md): durable methodological and architectural decisions.
+- [Execution plan](PLAN.md): schedule mapped to backlog issues, decision gates, budget, and the competitive landscape.
 
 ## License and citation
 

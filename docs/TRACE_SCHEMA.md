@@ -62,6 +62,11 @@ Required fields:
 - cache length before and after verification;
 - intervention identifier when active.
 
+Optional fields (required when the corresponding feature is active):
+
+- pre-round prediction values and their feature source (hook point / cached layer), when a pre-round predictor is active (I23);
+- draft early-exit layer, when early exit is active.
+
 ## Token trace
 
 Required fields:

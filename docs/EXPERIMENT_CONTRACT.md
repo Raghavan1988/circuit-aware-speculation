@@ -1,6 +1,6 @@
 # Experiment Contract
 
-This document locks the first-pass protocol. Deviations require a record in `DECISIONS.md`.
+This document locks the first-pass protocol. Deviations require a record in `DECISIONS.md`. (Amendments to policies 8–9 in this revision are authorized by D009.)
 
 ## Models
 
@@ -40,8 +40,8 @@ Target 150–200 test prompts per category, subject to dataset size. Split by pr
 5. entropy threshold;
 6. recent-acceptance heuristic;
 7. BanditSpec-style policy;
-8. learned output-confidence predictor;
-9. circuit-aware compute-optimal controller;
+8. learned acceptance predictor on draft representations (SpecDec++-style head; closest published baseline — reproduce early, issue I22);
+9. circuit-aware compute-optimal controller (deployed signal must be cheap, e.g., pre-round prediction from cached verified-context representations; offline activation capture must never run inside deployed timing);
 10. offline oracle using realized outcomes.
 
 Online policies must report cold-start behavior separately. The oracle must never be included in deployable comparisons.

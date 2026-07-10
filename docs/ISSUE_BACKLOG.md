@@ -24,8 +24,12 @@ Statuses are `OPEN`, `IN_PROGRESS`, `BLOCKED`, and `DONE`. Before starting, add 
 | I16 | OPEN | — | Run domain- and traffic-shift experiments | I14 | I15,I17 | A100/H100 |
 | I17 | OPEN | — | Add and validate the replication model pair | I03,I04,I06 | I15,I16 | A100/H100 |
 | I18 | OPEN | — | Generate acceptance atlas and primary figures | I11,I13,I14,I15,I16,I17 | — | CPU |
-| I19 | OPEN | — | Assemble anonymous artifact-driven TMLR manuscript | I18 | — | CPU |
+| I19 | OPEN | — | Assemble anonymous artifact-driven journal manuscript | I18 | — | CPU |
 | I20 | OPEN | — | Run clean reproduction and evidence audit | I19 | — | GPU/CPU |
+| I21 | OPEN | — | Verify landscape additions; maintain living comparison table | — | I01,I05 | CPU |
+| I22 | OPEN | — | Reproduce SpecDec++-style learned acceptance-head baseline | I03,I06,I10 | I08,I09 | GPU |
+| I23 | OPEN | — | Pre-round acceptance prediction from cached representations | I10,I12 | I13,I14 | GPU |
+| I24 | OPEN | — | Staged release package (benchmark, recipes, integration adapter) | I18,I20 | — | GPU/CPU |
 
 ## Acceptance criteria and artifacts
 
@@ -128,10 +132,11 @@ Statuses are `OPEN`, `IN_PROGRESS`, `BLOCKED`, and `DONE`. Before starting, add 
 - Generate the acceptance atlas and all figures from immutable traces via scripts.
 - Link every plotted value to run identifiers.
 - Include negative and contradictory results.
+- Produce the two headline figures: (a) layerwise emergence of acceptance information with intervention effect sizes overlaid; (b) end-to-end latency per policy with the overhead decomposition visible (draft / verify / controller / capture). If the central result cannot be told in these two figures, it is not yet crisp enough.
 
 ### I19 — Manuscript
 
-- Use the unmodified official TMLR template and maintain anonymity.
+- Use the target journal's unmodified official template (venue named only in the owner's private channel, per D008) and maintain anonymity.
 - Link every empirical claim to the claims ledger.
 - Include limitations, reproducibility, and appropriate broader-impact discussion.
 
@@ -140,3 +145,27 @@ Statuses are `OPEN`, `IN_PROGRESS`, `BLOCKED`, and `DONE`. Before starting, add 
 - Reproduce the primary table from a clean environment and recorded commands.
 - Verify claims, citations, anonymity, licensing, checksums, and absence of fabricated/illustrative results.
 - Produce a written pass/fail recommendation against the submission gate.
+
+### I21 — Landscape verification
+
+- Verify the four planning-pass reference additions against primary sources: arXiv:2603.01639 (adaptive drafting via RL), arXiv:2605.02888 (draft confidence under KV compression), arXiv:2604.14682 (task-conditioned acceptance dynamics), arXiv:2606.30265 (theoretical treatment of acceptance); one was found via a mirror site and needs primary-archive confirmation.
+- Re-scan for newer adjacent work; maintain a living comparison table in the repository.
+- Record impact on claims (notably C04) in the ledger before novelty claims are frozen.
+
+### I22 — Learned-head baseline
+
+- Reproduce a SpecDec++-style acceptance-prediction head on draft representations; document all deviations from the published formulation.
+- Report prediction quality and end-to-end latency under the same timing rules as every other policy; this is the closest published baseline for C01 and contract policy 8.
+
+### I23 — Pre-round prediction (headline candidate, per D009)
+
+- Predict next-round acceptance and accepted length from already-cached verified-context representations at selected layers, before any draft compute is spent.
+- Compare marginal deployed cost and prediction quality against post-draft signals (entropy, margin, the I22 head); report offline value and deployed-path cost separately.
+- Freeze feature and layer choice on development data; outcomes update C10.
+
+### I24 — Release package (staged per D010)
+
+- Package the versioned trace corpus/benchmark with documentation and licenses, reproducible cloud recipes with cost accounting, and (optional, G4) a serving-engine integration adapter or profiler.
+- Document the corpus's secondary framing (naturally-labeled small/large-model disagreement dataset; see `RESEARCH_SPEC.md`) and include the governance documents (claims ledger, decision log) in the public release.
+- Include a concise technical article built on the two I18 headline figures; open an upstream issue or pull request where the artifact solves a concrete serving problem.
+- Each release stage requires the corresponding gate in `RESEARCH_SPEC.md`; no component may present claims beyond the ledger.

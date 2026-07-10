@@ -4,7 +4,7 @@ These instructions apply to the entire repository.
 
 ## Before changing anything
 
-1. Read `README.md`, `docs/RESEARCH_SPEC.md`, `docs/EXPERIMENT_CONTRACT.md`, and `docs/DECISIONS.md` completely.
+1. Read `README.md`, `docs/RESEARCH_SPEC.md`, `docs/EXPERIMENT_CONTRACT.md`, `docs/DECISIONS.md`, and `PLAN.md` completely.
 2. Choose one unblocked issue from `docs/ISSUE_BACKLOG.md` and mark its status there before implementation.
 3. Check for overlapping work. Do not concurrently own the same module or artifact family.
 4. Treat `/home/raghavan/13_Raghavan_Content_Aware_Speculation_Control` as read-only reference material unless a task explicitly authorizes changes to it.
@@ -46,10 +46,15 @@ Implementation must not silently fall back to toy data or a different model. Fai
 - If an interface changes, update its contract before downstream code.
 - Do not rewrite unrelated user or agent work.
 
+## Naming and disclosure policy (D008, D011)
+
+- Do not name any conference or journal, any specific external organization or lab, or the owner's strategic goals in repository files. Refer to venues generically ("the target journal"). Specific names live only in the owner's private channel.
+- Agent opinion/discussion files are non-binding. Migrate durable content into the contract, plan, or backlog and delete them (the 2026-07-10 opinion files were migrated and deleted per D012).
+
 ## Manuscript rules
 
-- Use the unmodified official TMLR template.
-- Keep the submission PDF and repository artifacts anonymous until review policy permits disclosure.
+- Use the target journal's unmodified official template (venue named only in the owner's private channel, per D008).
+- Keep the submission PDF and repository artifacts anonymous until review policy permits disclosure. Public releases follow the staged policy in D010.
 - Every empirical sentence must map to an experiment ID in the claims ledger.
 - Remove illustrative figures from results; conceptual diagrams must be labeled as such.
 - Do not submit while any central claim remains `UNTESTED` or lacks a reproducible supporting artifact.
