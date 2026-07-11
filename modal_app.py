@@ -309,12 +309,35 @@ def run_policy(
     return results
 
 
+@app.function(image=image, volumes=VOLUMES, timeout=8 * 3600)  # CPU orchestrator
+def run_sweep(run_id: str, git: str, created_at_utc: str,
+              max_new_tokens: int = 256, cap: int = 0) -> dict:
+    """Server-side I07 orchestrator: runs target_only first (writes the
+    reference hashes), then fans the 7 spec policies out to parallel A100
+    containers and gathers them — ALL server-side, so a launch with
+    `modal run --detach` survives any local disconnect (this single function
+    is the one kept alive; the `--detach` "last function only" caveat is met
+    because the fan-out is spawned by THIS function, not the local process).
+    """
+    ref = run_policy.remote("target_only", run_id, git, created_at_utc,
+                            max_new_tokens, cap)
+    handles = [run_policy.spawn(p, run_id, git, created_at_utc,
+                                max_new_tokens, cap)
+               for p in SWEEP_POLICIES[1:]]
+    results = {"target_only": ref}
+    for p, h in zip(SWEEP_POLICIES[1:], handles):
+        results[p] = h.get()
+    print("sweep complete:", results)
+    return results
+
+
 @app.local_entrypoint()
 def sweep(run_id: str = "", cap: int = 0, max_new_tokens: int = 256,
           serial: bool = False):
-    """I07 driver: target_only first (writes references), then the spec
-    policies in parallel containers (or one container with --serial for
-    smoke/cap runs, which loads the models once)."""
+    """Thin launcher. For the real sweep use `modal run --detach
+    modal_app.py::sweep`: it delegates to the server-side `run_sweep`
+    orchestrator so the job is disconnect-proof. `--serial` runs all policies
+    in one container (smoke/cap runs) via the local path."""
     import datetime
     import subprocess
 
@@ -325,12 +348,10 @@ def sweep(run_id: str = "", cap: int = 0, max_new_tokens: int = 256,
     print(f"run_id={run_id} git={git[:12]} cap={cap}")
     if serial:
         print(run_policy.remote("all", run_id, git, ts, max_new_tokens, cap))
-        return
-    print(run_policy.remote("target_only", run_id, git, ts, max_new_tokens, cap))
-    handles = [run_policy.spawn(p, run_id, git, ts, max_new_tokens, cap)
-               for p in SWEEP_POLICIES[1:]]
-    for h in handles:
-        print(h.get())
+    else:
+        # Delegate orchestration server-side; this .remote() is the single
+        # function --detach keeps alive.
+        print(run_sweep.remote(run_id, git, ts, max_new_tokens, cap))
 
 
 @app.function(image=image, gpu=GPU, volumes=VOLUMES, timeout=3600)

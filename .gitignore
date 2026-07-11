@@ -42,3 +42,16 @@ paper/*.synctex.gz
 .idea/
 .vscode/
 *~
+ROADMAP.pdf
+# Private agent notes (not part of the research contract)
+GROK_IDEAS.md
+CODEX_IDEAS.md
+CLAUDE_IDEAS.md
+claude_predictions.md
+tasks/*
+# Phase-1 harness
+/artifacts/
+data/prompts.jsonl
+data/split_manifest.json
+.pytest_cache/
+*.egg-info/

@@ -73,13 +73,21 @@ acceptance; that is the differentiation (see `RESEARCH_SPEC.md`,
 | SpecKV (arXiv:2605.02888) | Draft confidence under KV compression | Verify (I21); cite. |
 | Theory of acceptance (arXiv:2606.30265) | Theoretical treatment of acceptance | Verify against primary archive (found via mirror); constrains Track B option "theory". |
 | SGLang adaptive speculation (docs, 2026) | Runtime `num_steps` via EMA of accepted length; server-level tiers with pre-captured CUDA graphs | Engines now ship adaptive length (EAGLE-only, no per-request control, no custom policies); cite; strengthens the mechanistic differentiation. |
-| DSpark (SGLang release, 2026-07-06) | Per-request **verify** budgets from a calibrated trained confidence head; ragged verify under CUDA graphs | New production-shipped adjacent method — add to I21 and cite. Trims verification after drafting; does not avoid draft compute and needs a trained head — contrast with the pre-round bet (I23), which decides before drafting from cached states. |
-| Not-a-Bandit (arXiv:2506.00285) | No-regret drafter selection | Deferred-scope relative; cite. |
+| DSpark (arXiv:2607.05147, 2026-07-06; authors' production stack, **not** SGLang — corrected 2026-07-11 per I21 R2) | Per-request **verify** budgets from a calibrated trained linear confidence head; live-traffic deployment | Production-deployed adjacent method — cite. Trims verification after drafting; does not avoid draft compute and needs a trained head — contrast with the pre-round bet (I23), which decides before drafting from cached states. Also publishes probe-quality metrics (AUROC 0.81–0.90, ECE ≈1%) — see 2026-07-11 ledger note on C01 reframing. |
+| Not-a-Bandit (arXiv:2510.20064; earlier cited ID 2506.00285 was wrong — corrected 2026-07-11) | No-regret full-information drafter selection | Deferred-scope relative; cite. Full-information label trick reused for counterfactual training labels (D018.3). |
 | MetaSD (2024) | Per-step drafter UCB | Deferred-scope relative; cite. |
 | Task detection + heterogeneous drafting (arXiv:2505.08600) | Task-based routing | Closest to the deferred routing idea; cite. |
 
 Implication: **speed matters.** Several groups are active on adjacent questions;
 the staged-release policy (D010) exists so priority is never hostage to polish.
+
+I21 updates: (2026-07-10, Grok) all four planning-pass queue items verified on
+primary arXiv; the mirror-found item was 2606.30265; C04 not pre-empted by
+2604.14682 (domain grain only). (2026-07-11) Not-a-Bandit ID and DSpark
+attribution corrected in place above; `docs/landscape.md` is authoritative for
+comparison detail and now includes the 2026-07-11 sweep additions (AdaEAGLE,
+Judge Decoding, WhiFlash, C2T, Sequoia, DISCO, AdaEDL, DSDE, TurboSpec) and a
+deployed-practice section.
 
 ## 4. Execution schedule (cloud compute)
 
@@ -122,12 +130,17 @@ Superseded by D009: the gates are specified in `docs/RESEARCH_SPEC.md`
   explaining and mitigating acceptance collapse under domain shift, compression,
   or target–draft mismatch. Pick one, never several (D009).
 - (Phase 2) Serving-engine choice for the G4 adapter is deferred until G4. Current lean:
-  **SGLang** — its 2026 adaptive-speculation tiers and DSpark's ragged
-  per-request verify (see §3) provide exactly the integration surface a
-  per-request controller needs, and an open upstream feature request for dynamic
-  step control shows appetite. The core science (Steps 1–9) stays in the custom
-  harness regardless: engines expose no per-round policy hooks, no signal APIs,
-  and no activation access under CUDA graphs. Re-verify both engines at G4.
+  **SGLang** — its 2026 adaptive-speculation tiers provide a plausible
+  integration surface for a per-request controller, and an open upstream feature
+  request for dynamic step control shows appetite. *(Correction 2026-07-11, I21
+  R2: DSpark itself is NOT an SGLang feature — arXiv:2607.05147 deploys in the
+  authors' own production stack; the earlier "DSpark's ragged per-request verify
+  in SGLang" rationale was wrong. The SGLang-side DSpark tracking issue below is
+  an integration request, not shipped code. The engine lean is therefore weaker
+  than first recorded — re-verify the whole surface at G4.)* The core science
+  (Steps 1–9) stays in the custom harness regardless: engines expose no
+  per-round policy hooks, no signal APIs, and no activation access under CUDA
+  graphs. Re-verify both engines at G4.
 - (Phase 2) Upstream contribution map (verified 2026-07-10; re-verify at G4): per-request
   draft-length control remains unserved — upstream issue #21459 requested it and
   was closed inactive; the Q2-2026 spec roadmap (#23005) names per-request
