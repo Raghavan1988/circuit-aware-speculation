@@ -9,6 +9,24 @@ named in this file; submission windows appear as dates only.
 
 ---
 
+## 0. Phase structure
+
+The work splits into two phases with a hard boundary:
+
+- **Phase 1 — custom-harness science (Steps 1–9).** Everything the paper's
+  claims rest on: exact decoding, baselines, probes, interventions, the
+  controller, replication. Runs entirely in our own `cas` harness on Modal/H100.
+  Batch-1, unloaded. **No serving engine.** This is what is being built now.
+- **Phase 2 — serving-engine integration + load validation (Step 10 / I24 /
+  gate G4).** All SGLang work lives here: implementing per-request draft-length +
+  skip control in SGLang (the unserved upstream gap), then demonstrating TTFT/ITL
+  impact **under concurrent load**. Gated by D010 (artifact stage) and only
+  started after the Phase-1 evidence gate. The engine choice (SGLang lean) and
+  the upstream-contribution map are Phase-2 concerns; §3 and §5 note them but
+  they are not touched during Phase 1.
+
+Nothing in Phase 1 imports or depends on SGLang. Phase 2 is a separate track.
+
 ## 1. Where this plan comes from
 
 1. An earlier plan for the reference project at
@@ -31,8 +49,8 @@ named in this file; submission windows appear as dates only.
   Qwen2.5 pair is ungated and unblocked. The Llama replication pair is gated and
   **blocked until the user refreshes the token** (`huggingface-cli login`) — this
   gates issue I17.
-- Rough budget at ~US$2–3/hr for an 80 GB A100: 60–100 GPU-hours for the full
-  protocol ≈ **US$150–300**. Trace/activation storage: plan tens of GB.
+- Rough budget (per D013: Modal, H100 80GB at ~US$3–5/hr): 40–60 GPU-hours for
+  the full protocol ≈ **US$150–300**. Trace/activation storage: plan tens of GB.
 
 ## 3. Competitive landscape (scanned 2026-07-10; verify via I21 before freezing claims)
 
@@ -54,6 +72,8 @@ acceptance; that is the differentiation (see `RESEARCH_SPEC.md`,
 | Acceptance dynamics across domains (arXiv:2604.14682) | Task-conditioned acceptance behavior | Verify (I21); may reposition claim C04 as control. |
 | SpecKV (arXiv:2605.02888) | Draft confidence under KV compression | Verify (I21); cite. |
 | Theory of acceptance (arXiv:2606.30265) | Theoretical treatment of acceptance | Verify against primary archive (found via mirror); constrains Track B option "theory". |
+| SGLang adaptive speculation (docs, 2026) | Runtime `num_steps` via EMA of accepted length; server-level tiers with pre-captured CUDA graphs | Engines now ship adaptive length (EAGLE-only, no per-request control, no custom policies); cite; strengthens the mechanistic differentiation. |
+| DSpark (SGLang release, 2026-07-06) | Per-request **verify** budgets from a calibrated trained confidence head; ragged verify under CUDA graphs | New production-shipped adjacent method — add to I21 and cite. Trims verification after drafting; does not avoid draft compute and needs a trained head — contrast with the pre-round bet (I23), which decides before drafting from cached states. |
 | Not-a-Bandit (arXiv:2506.00285) | No-regret drafter selection | Deferred-scope relative; cite. |
 | MetaSD (2024) | Per-step drafter UCB | Deferred-scope relative; cite. |
 | Task detection + heterogeneous drafting (arXiv:2505.08600) | Task-based routing | Closest to the deferred routing idea; cite. |
@@ -101,6 +121,23 @@ Superseded by D009: the gates are specified in `docs/RESEARCH_SPEC.md`
   arXiv:2606.30265 does not already occupy this; (b) a robustness mechanism
   explaining and mitigating acceptance collapse under domain shift, compression,
   or target–draft mismatch. Pick one, never several (D009).
+- (Phase 2) Serving-engine choice for the G4 adapter is deferred until G4. Current lean:
+  **SGLang** — its 2026 adaptive-speculation tiers and DSpark's ragged
+  per-request verify (see §3) provide exactly the integration surface a
+  per-request controller needs, and an open upstream feature request for dynamic
+  step control shows appetite. The core science (Steps 1–9) stays in the custom
+  harness regardless: engines expose no per-round policy hooks, no signal APIs,
+  and no activation access under CUDA graphs. Re-verify both engines at G4.
+- (Phase 2) Upstream contribution map (verified 2026-07-10; re-verify at G4): per-request
+  draft-length control remains unserved — upstream issue #21459 requested it and
+  was closed inactive; the Q2-2026 spec roadmap (#23005) names per-request
+  adaptive configuration as a goal but shipped only batch-size-level adaptation
+  (#23705); the DSpark tracking issue (#30344) is open and unassigned, listing
+  an adaptive cost model and acceptance-observability metrics as follow-ups that
+  overlap I14 and our profiler. The `STANDALONE` algorithm covers independent
+  small-LLM drafts, matching the contract's model setup. Sequencing per D010:
+  one small early credibility contribution (e.g., docs issue #18268 or metrics)
+  is acceptable; the controller PR waits for the validated signal (G4).
 
 ## 6. Submission-window calendar (dates only, per D008)
 

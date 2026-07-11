@@ -1,0 +1,26 @@
+# Primary model pair (ungated). Fill `revision` with the SHA printed by
+# scripts/verify_env.py before any results run (contract: no floating aliases).
+target:
+  model_id: "Qwen/Qwen2.5-7B-Instruct"
+  revision: null        # TODO(I01): pin resolved commit SHA
+  dtype: "bfloat16"
+  attn_implementation: "eager"   # D014
+draft:
+  model_id: "Qwen/Qwen2.5-0.5B-Instruct"
+  revision: null        # TODO(I01): pin resolved commit SHA
+  dtype: "bfloat16"
+  attn_implementation: "eager"
+
+decoding:
+  action_lengths: [0, 1, 2, 3, 4, 6, 8]   # 0 == skip
+  max_new_tokens: 256                       # D013 default; confirm at first sweep
+  protocol: "greedy_exact_match"
+
+# Replication pair (I17) is gated; requires the owner to refresh the HF token.
+replication:
+  target:
+    model_id: "meta-llama/Llama-3.1-8B-Instruct"
+    revision: null
+  draft:
+    model_id: "meta-llama/Llama-3.2-1B-Instruct"
+    revision: null

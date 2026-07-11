@@ -33,3 +33,32 @@ Known counterexamples:
 Interpretation boundary:
 Updated by/date:
 ```
+
+## Run log: failed runs and negative results
+
+Faithful record of failed/aborted runs per AGENTS.md. Numbers are copied from
+immutable run logs, never hand-estimated.
+
+### 2026-07-10 — I03 equivalence gate failed on the primary bf16 pair (unresolved → pending fp32 confirmation)
+
+- **Run:** `CAS_GPU=A100 modal run modal_app.py::run_tests` (Modal app
+  `ap-l3nL9Xr4BBy67rX0ML33vG`), Qwen2.5-7B-Instruct `a09a3545` target /
+  Qwen2.5-0.5B-Instruct `7ae55760` draft, dtype **bfloat16**, eager attention,
+  A100-40GB, transformers 4.46.3 / torch 2.5.1+cu124.
+- **Result:** 18 passed, 7 failed in 604s. `test_bit_identical_to_greedy`
+  failed for all L∈{1,2,3,4,6,8}; `test_fp_divergence_rate` = **6/12 = 0.50**
+  sequence-level (ceiling 0.05). `test_skip_action_equivalent` (L=0) **passed**.
+- **Root cause (identified, not a cache bug):** skip (single-token target
+  forwards) is exact; every L>0 round runs the target over `gap+proposals` in one
+  forward. The parallel-verify vs. sequential-decode arithmetic difference
+  (D014.2) is ~1e-2 in **bf16**, not the ~1e-7 the <0.1% expectation assumed.
+  Back-solving 50%/sequence over 96 tokens ⇒ **~0.7% per-token** argmax flip; one
+  flip derails the rest of the greedy continuation. Cache/commit bookkeeping was
+  re-derived by hand for k=0, 0<k<L, and k=L and is correct.
+- **Next step (no claim asserted until run):** (1) re-run the gate with
+  `CAS_DTYPE=float32` to confirm exact algorithmic identity (expect 0 divergence);
+  (2) re-characterize bf16 with a per-token rate + logged top-1/top-2 margins at
+  each flip; (3) record the measured rate as a D014 addendum and set the test
+  ceiling per-token. Until (1) passes, I03 stays IN_PROGRESS and no losslessness
+  claim is made.
+- Logged by Claude, 2026-07-10.

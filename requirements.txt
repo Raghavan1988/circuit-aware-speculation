@@ -1,0 +1,13 @@
+# Phase-1 harness dependencies (pins mirror modal_app.py; re-lock after first run).
+# The pure-logic core (cas.commit, cas.data.splits) needs only the stdlib and is
+# tested without these; the engine and ingestion need the full stack on GPU.
+torch==2.5.1
+transformers==4.46.3
+accelerate==1.1.1
+datasets==3.1.0
+huggingface_hub==0.26.2
+pyarrow==18.0.0
+scikit-learn==1.5.2
+numpy==1.26.4
+pytest==8.3.3
+pyyaml>=6.0

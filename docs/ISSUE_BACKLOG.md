@@ -6,11 +6,11 @@ Statuses are `OPEN`, `IN_PROGRESS`, `BLOCKED`, and `DONE`. Before starting, add 
 
 | ID | Status | Owner | Issue | Depends on | Parallel | Compute |
 |---|---|---|---|---|---|---|
-| I01 | OPEN | — | Provision and pin RunPod/Modal environment | — | I05 | GPU setup |
-| I02 | OPEN | — | Implement exact primary Qwen target–draft decoding | I01 | — | A100/H100 |
-| I03 | OPEN | — | Add equivalence, rejection, and KV-cache tests | I02 | I04,I05 | Small GPU/CPU |
-| I04 | OPEN | — | Implement synchronized latency instrumentation | I02 | I03,I05 | GPU |
-| I05 | OPEN | — | Build dataset ingestion and prompt-grouped splits | — | I01,I03,I04 | CPU |
+| I01 | IN_PROGRESS | Claude | Provision and pin Modal environment | — | I05 | GPU setup |
+| I02 | IN_PROGRESS | Claude | Implement exact primary Qwen target–draft decoding | I01 | — | A100/H100 |
+| I03 | IN_PROGRESS | Claude | Add equivalence, rejection, and KV-cache tests | I02 | I04,I05 | Small GPU/CPU |
+| I04 | IN_PROGRESS | Claude | Implement synchronized latency instrumentation | I02 | I03,I05 | GPU |
+| I05 | IN_PROGRESS | Claude | Build dataset ingestion and prompt-grouped splits | — | I01,I03,I04 | CPU |
 | I06 | OPEN | — | Implement and validate the trace writer | I02,I05 | I03,I04 | GPU/CPU |
 | I07 | OPEN | — | Run target-only, skip, and fixed-length sweep | I03,I04,I06 | — | A100/H100 |
 | I08 | OPEN | — | Implement entropy and recent-acceptance policies | I03,I06 | I09 | Small GPU |
@@ -26,10 +26,21 @@ Statuses are `OPEN`, `IN_PROGRESS`, `BLOCKED`, and `DONE`. Before starting, add 
 | I18 | OPEN | — | Generate acceptance atlas and primary figures | I11,I13,I14,I15,I16,I17 | — | CPU |
 | I19 | OPEN | — | Assemble anonymous artifact-driven journal manuscript | I18 | — | CPU |
 | I20 | OPEN | — | Run clean reproduction and evidence audit | I19 | — | GPU/CPU |
-| I21 | OPEN | — | Verify landscape additions; maintain living comparison table | — | I01,I05 | CPU |
+| I21 | IN_PROGRESS | Claude | Verify landscape additions; maintain living comparison table | — | I01,I05 | CPU |
 | I22 | OPEN | — | Reproduce SpecDec++-style learned acceptance-head baseline | I03,I06,I10 | I08,I09 | GPU |
 | I23 | OPEN | — | Pre-round acceptance prediction from cached representations | I10,I12 | I13,I14 | GPU |
 | I24 | OPEN | — | Staged release package (benchmark, recipes, integration adapter) | I18,I20 | — | GPU/CPU |
+
+## Build status (2026-07-10, Claude)
+
+Phase-1 Steps 1–2 implemented. **Verified locally:** pure accept/commit/rollback
+logic (`cas.commit`, 9 tests) and prompt-grouped splitting (`cas.data.splits`,
+8 tests) — 17 passing, stdlib only. **Pending on Modal/H100** (local torch is
+CPU-only and too old): the model-level bit-identity gate (`test_equivalence_gpu`),
+`smoke_decode`, dataset ingestion, and revision pinning. Issues stay IN_PROGRESS
+until the GPU gate passes; no results exist yet. Run order on Modal:
+`verify_env` → paste SHAs into `cas.config` → `ingest_data` → `run_tests` →
+`smoke_decode`.
 
 ## Acceptance criteria and artifacts
 

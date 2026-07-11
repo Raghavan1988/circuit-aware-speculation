@@ -1,0 +1,28 @@
+# Workload configuration (issue I05; choices per D013).
+# Splits are prompt-grouped, seed-frozen; manifests written by modal_app.ingest_data.
+domains:
+  code:
+    dataset: "openai_humaneval"
+    split: "test"
+    license: "MIT"
+    target_prompts: 164
+  math:
+    dataset: "gsm8k/main"
+    split: "test"
+    license: "MIT"
+    target_prompts: 200
+  chat:
+    dataset: "HuggingFaceH4/mt_bench_prompts"
+    split: "train"
+    note: "first turns (~80); supplement to ~150 from a documented source (D013)"
+    target_prompts: 150
+  summ:            # held-out; never used for any fitting (D013)
+    dataset: "EdinburghNLP/xsum"
+    split: "test"
+    license: "CC-BY-SA-4.0"
+    target_prompts: 200
+
+split:
+  strategy: "prompt_grouped"
+  dev_fraction: 0.5
+  seed: 0
