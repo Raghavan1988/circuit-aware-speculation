@@ -18,7 +18,6 @@ No claim may move to `SUPPORTED` without experiment identifiers, applicable sett
 | C10 | Next-round acceptance is predictable from cached verified-context representations before any draft compute, at deployable marginal cost. | UNTESTED | Prompt-grouped held-out comparison against post-draft signals (entropy, margin, learned head), with deployed-path overhead measured (I23) | — | I21 re-scan (2026-07-10): no primary-verified work predicts next-round acceptance from cached verified-context reps *before draft compute*. Closest are post-draft heads (SpecDec++, DSpark) and draft entropy/confidence (SVIP, SpecKV). Novelty threat low; re-check before freeze |
 | C11 | The identified acceptance representation transfers beyond independent drafts to a modern speculator family. | UNTESTED | Cross-speculator evaluation; extension work, only after the core evidence gate (D009) | — | — |
 
-
 ## Landscape verification notes (I21)
 
 ### 2026-07-10 — Planning-pass four-paper verification (Grok)
@@ -90,3 +89,22 @@ immutable run logs, never hand-estimated.
   confirmed; the bf16 losslessness statement is "lossless up to logged argmax
   ties at the measured rate."
 - Logged by Claude, 2026-07-10.
+
+### 2026-07-10 — I08/I09 baseline policy tooling (not claim evidence)
+
+- Implemented resettable, pure-Python entropy-stop and rolling-acceptance
+  policies plus a UCBSpec-style length-arm policy in `cas.policies`.
+- UCBSpec deviations from arXiv:2505.15141: arms are the locked draft lengths
+  including skip rather than heterogeneous hyperparameter specifications under
+  one shared maximum; decoding is greedy exact-match; the generation cap is
+  enforced by the engine; deterministic arm-order tie-breaking is used. The
+  implementation retains round-robin initialization, accepted-plus-bonus output
+  length as reward, and the published self-normalized confidence radius. The
+  paper's stopping-time guarantee is not claimed for the changed arm definition.
+- Unit tests demonstrate cold-start and post-initialization selection, threshold
+  equality, rolling history, skip handling, and request reset. Reproduce with
+  `PYTHONPATH=src python -m pytest tests/test_policies.py -q`.
+- This is tooling only and does not change C05–C08. Held-out quality, latency,
+  cold-start, and steady-state evidence require engine integration and real
+  traces after I06/I07.
+- Logged by Codex, 2026-07-10.

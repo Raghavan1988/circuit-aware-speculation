@@ -8,6 +8,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+# Bump on any schema change and add a migration note (TRACE_SCHEMA invariant 7).
+SCHEMA_VERSION = "0.1.0"
+
 
 @dataclass
 class RoundTrace:

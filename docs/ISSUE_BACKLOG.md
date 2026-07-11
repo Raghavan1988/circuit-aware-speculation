@@ -13,8 +13,8 @@ Statuses are `OPEN`, `IN_PROGRESS`, `BLOCKED`, and `DONE`. Before starting, add 
 | I05 | IN_PROGRESS | Claude | Build dataset ingestion and prompt-grouped splits | — | I01,I03,I04 | CPU |
 | I06 | IN_PROGRESS | Claude | Implement and validate the trace writer | I02,I05 | I03,I04 | GPU/CPU |
 | I07 | OPEN | — | Run target-only, skip, and fixed-length sweep | I03,I04,I06 | — | A100/H100 |
-| I08 | OPEN | — | Implement entropy and recent-acceptance policies | I03,I06 | I09 | Small GPU |
-| I09 | OPEN | — | Reproduce a BanditSpec-style baseline | I03,I06 | I08 | GPU |
+| I08 | DONE | Codex | Implement entropy and recent-acceptance policies | I03,I06 | I09 | Small GPU |
+| I09 | DONE | Codex | Reproduce a BanditSpec-style baseline | I03,I06 | I08 | GPU |
 | I10 | OPEN | — | Add selected-layer activation capture | I03,I06 | I11 | A100/H100 |
 | I11 | DONE | Grok | Build and validate token-category annotation | I05,I06 | I10 | CPU |
 | I12 | OPEN | — | Train leakage-safe layerwise acceptance probes | I10,I11 | — | GPU/CPU |
@@ -42,7 +42,6 @@ until the GPU gate passes; no results exist yet. Run order on Modal:
 `verify_env` → paste SHAs into `cas.config` → `ingest_data` → `run_tests` →
 `smoke_decode`.
 
-
 ## Build status (2026-07-10, Grok — I21 + I11)
 
 - **I21 DONE:** Four planning-pass arXiv IDs verified on primary archive
@@ -55,6 +54,17 @@ until the GPU gate passes; no results exist yet. Run order on Modal:
   recorded as D016. Seam: pure `annotate_token(...)` for I06 writer.
   Repro: `PYTHONPATH=src python -m pytest tests/test_annotate.py -q`
   (21 passed; stratified agreement script-printed with `-s`).
+
+## Build status (2026-07-10, Codex — I08 + I09)
+
+- **I08 DONE:** resettable rolling-acceptance action policy and entropy stop rule;
+  frozen constructor hyperparameters, threshold boundaries, skip handling, and
+  request resets are unit-tested. The engine consult point is recorded in D017
+  for Claude to wire after I06.
+- **I09 DONE:** UCBSpec-style length-arm policy with round-robin cold start,
+  accepted-plus-bonus reward, and the published confidence radius. Deviations
+  are disclosed in the module and claims ledger. Repro:
+  `PYTHONPATH=src python -m pytest tests/test_policies.py -q` (7 passed).
 
 ## Acceptance criteria and artifacts
 

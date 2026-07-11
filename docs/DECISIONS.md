@@ -117,6 +117,16 @@ Use dated entries with context, decision, alternatives, and consequences. Do not
 - **Alternatives:** SDPA or FlashAttention-2 (faster, but capture-hostile / would force a backend switch between timing and probing); strict zero-tolerance or distributional equivalence; stateless re-prefill.
 - **Consequences:** I03 correctness tests include a stateless-vs-persistent token-identity check and an FP-divergence-rate measurement. Timing numbers are relative, not production-absolute; the absolute claim is deferred to the serving-engine tier. Any later switch to a fused backend for a specific measurement must be recorded and must re-verify equivalence.
 
+## D015 — Mechanistic-analysis tooling: nnsight for capture/intervention, scikit-learn for probes
+
+- **Date:** 2026-07-10
+- **Context:** Steps 5–6 (activation capture I10, probes I12/I13, interventions I15, pre-round prediction I23) need a tooling decision. Options considered: TransformerLens, nnsight, hand-rolled forward hooks, pyvene.
+- **Decision:**
+  1. **Capture + intervention: `nnsight`.** It wraps the *actual* Hugging Face module, so activations and interventions come from the same model whose exact greedy equivalence was proven in D014/I03 — numerical identity is preserved. Owner directive (2026-07-10): prefer a maintained library over a from-scratch hook layer.
+  2. **Probes / calibration (I12/I13): `scikit-learn`** (already pinned): regularized logistic/linear probes, AUROC/AUPRC/Brier/ECE. Standard ML, no bespoke code.
+  3. **TransformerLens is rejected for the correctness-critical path.** `HookedTransformer` re-implements the model (LayerNorm folding, weight centering), so its logits are not bit-identical to HF Qwen2.5. Because acceptance is a razor-thin argmax comparison — the bf16-vs-fp32 gate this session flipped ~0.7% of tokens from a ~1e-2 logit difference (see CLAIMS_LEDGER run log) — a systematic ~1e-4 deviation from TL folding could silently flip acceptance labels, so TL activations would describe a *different* model than the one generating our labels. TL remains acceptable **offline only** (logit lens, exploratory activation patching), never as the source of activations backing a published probe/intervention.
+- **Alternatives:** TransformerLens (rejected above; reimplementation breaks exact-equivalence); raw PyTorch forward hooks (leanest, but owner prefers a maintained library); pyvene (config-driven interventions — heavier, less transparent for the G2 causal audit than nnsight tracing).
+- **Consequences:** Add `nnsight` to the pinned env at I10 (re-lock the image). I10 must still assert capture does not change output tokens (read-only tracing), and I15 interventions must remain explicit enough to audit for the G2 causal gate. The earlier proposed TL-vs-HF fidelity check is moot (TL not used on the critical path); an equivalence assertion for nnsight capture replaces it.
 
 ## D016 — Token annotation interface (I11)
 
@@ -132,3 +142,11 @@ Use dated entries with context, decision, alternatives, and consequences. Do not
   7. **Validation:** seeded stratified golden sample in `tests/test_annotate.py`; agreement is script-computed, never hand-typed into result tables.
 - **Alternatives:** spaCy/NER pipeline (heavier, non-reproducible without model pins); mutually exclusive BIO tags (loses ambiguity the atlas needs); phase as fraction of max_new_tokens only (not streaming-friendly).
 - **Consequences:** I06 writer should call `annotate_token` per proposed/target token and store `categories` (sorted list or set), `phase`, and both version strings. No edits to `cas.trace` from this decision — seam only. Re-annotation of historical traces is possible offline via `annotate_sequence` when pieces are retained.
+
+## D017 — Per-token draft stop-rule seam (I08)
+
+- **Date:** 2026-07-10
+- **Context:** The entropy baseline decides before each proposed draft token, while the existing action-policy seam selects only a maximum length at round start. Codex owns the pure policy object; Claude owns engine integration.
+- **Decision:** Define `cas.policies.StopContext` with draft index, current entropy, current margin, and previously proposed token IDs, plus a resettable `StopRule` callable returning `True` to stop before the current proposal. The first implementation, `EntropyStopRule`, stops only when entropy strictly exceeds a development-selected frozen threshold.
+- **Alternatives:** Encode entropy stopping as a round-level action (cannot react within a draft); edit the engine before its owner ratifies the consult point (would overlap active work).
+- **Consequences:** Claude may wire this seam into the draft loop after I06. Equality at the threshold continues drafting; tests lock that boundary and request-reset behavior. No engine file was changed by I08.
