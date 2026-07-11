@@ -36,6 +36,36 @@ No claim may move to `SUPPORTED` without experiment identifiers, applicable sett
 - This does **not** move C04; acceptance-atlas numbers require real decode traces (I07+).
 - Logged by Grok, 2026-07-10.
 
+### 2026-07-11 — Literature-sweep impacts on C01/C10 (Claude; 25-agent verified sweep, details in CLAUDE_IDEAS.md)
+
+- **C01 instrument scooped, science claim open:** DSpark (arXiv:2607.05147,
+  2026-07-06, full text verified) publishes a calibrated **linear** head on
+  draft hidden states for per-token acceptance (AUROC 0.81–0.90, ECE ≈1% after
+  per-position temperature scaling). C01 must be framed as the controlled
+  incremental-information study (vs combined entropy+margin+history+domain
+  baseline, prompt-grouped splits, layer localization) — no published work has
+  run that comparison; that negative finding survived checks across ~70 papers.
+- **C10 narrowed, not scooped — new counterexamples to record:** AdaEAGLE
+  (arXiv:2412.18910; pre-draft next-round length regression from the target's
+  last-verified-token hidden state — same input class/timing, EAGLE setting,
+  uncalibrated, no baselines, no skip); Judge Decoding (arXiv:2501.19309;
+  linear head on target embeddings judging draft acceptability — during verify,
+  relaxes losslessness); WhiFlash (arXiv:2606.07710; target-hidden-state
+  pre-draft drafter routing). C10's pre-round, lossless, calibrated,
+  baseline-controlled, independent-drafter cell remains unoccupied as of
+  2026-07-11. Adjacent activity is monthly — supports staged-release urgency
+  (D010).
+- **C10 baseline hardening required before freeze:** target next-token entropy
+  and top-1/top-2 margin at the last verified position are free byproducts of
+  the verification pass and, per acceptance theory (arXiv:2606.30265), carry
+  the governing variable. C10's baseline must include them (schema fields
+  proposed for I06), else the claim is vulnerable to a one-line rebuttal.
+- **ID/venue corrections for I21 queue:** Not-a-Bandit primary ID is
+  2510.20064 (2506.00285 resolves to a different paper); DSpark's verified
+  paper text does not mention SGLang — the landscape's "SGLang release"
+  attribution needs re-verification.
+- Logged by Claude, 2026-07-11.
+
 ## Evidence record template
 
 When updating a claim, append:
@@ -89,6 +119,33 @@ immutable run logs, never hand-estimated.
   confirmed; the bf16 losslessness statement is "lossless up to logged argmax
   ties at the measured rate."
 - Logged by Claude, 2026-07-10.
+
+### 2026-07-11 — Engine review fixes + fp32 re-gate + I07 smoke characterization
+
+- **Adversarial review (22 agents) of the D018 engine wiring** confirmed 5
+  defects, one **critical and pre-existing**: tokens after an accepted mid-round
+  eos were committed while greedy stops at eos — token-identity violation on any
+  eos-terminating request (the prior gate's raw prompts rarely reached eos in 96
+  tokens, hence never caught). Fixed same day (emit loop breaks at first
+  committed eos; termination labeled from committed tokens; per-round
+  start_output_pos snapshot; frontier signals moved inside measured "tracing"
+  time; TokenTrace `accepted` split from counterfactual `target_match`). No
+  results are invalidated: none existed. **Re-gate: fp32 73/73 passed** (Modal
+  app `ap-85dmbyOiFYsL6Y1VxlTTRp`), including a new chat-template eos
+  regression test, stop-rule equivalence at both extremes, and D018 field
+  checks.
+- **I07 smoke (cap=2, bf16, max_new=256, run `sweep-2026-07-11T172406`+fix):**
+  all 9 policy trace runs sealed through the full writer path. Per-request
+  equivalence vs the target-only reference: skip 2/2 identical; drafted
+  policies 10/12 diverged — **consistent with the 2026-07-10 bf16
+  characterization** (~0.7%/token ⇒ expected ≈83% sequence divergence at 256
+  tokens; observed 83%). Divergences are fp argmax ties, flagged per-request in
+  `equivalence_status`; per-round acceptance labels are exact in-context ground
+  truth regardless of trajectory divergence.
+- First smoke attempt OOMed (38GB): sweep-runner target-only helper lacked
+  `torch.no_grad()`; fixed, plus allocator hygiene. Recorded as a failed run
+  per AGENTS.md; no artifacts were sealed by the failed attempt.
+- Logged by Claude, 2026-07-11.
 
 ### 2026-07-10 — I08/I09 baseline policy tooling (not claim evidence)
 

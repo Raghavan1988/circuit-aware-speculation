@@ -30,6 +30,7 @@ import torch
 from .commit import verify_and_commit
 from .config import EngineConfig
 from .models import LoadedPair
+from .policies import StopContext  # D017 stop-rule seam (pure stdlib)
 from .signals import entropy_from_logits, greedy_token, top1_margin_from_logits
 from .timing import Stopwatch
 from .trace.records import RequestSummary, RoundTrace
@@ -101,10 +102,13 @@ class SpeculativeDecoder:
         policy_name: str = "unnamed",
         max_new_tokens: int | None = None,
         record_signals: bool = True,
+        stop_rule=None,  # cas.policies.StopRule (D017); duck-typed on purpose
     ) -> GenerationResult:
         max_new = max_new_tokens or self.cfg.max_new_tokens
         eos_id = self.pair.tokenizer.eos_token_id
         sw = Stopwatch(self.device)
+        if stop_rule is not None:
+            stop_rule.reset()  # D017: rules must fully reset between requests
 
         from transformers import DynamicCache
 
@@ -136,8 +140,15 @@ class SpeculativeDecoder:
 
         round_id = 0
         while len(generated) < max_new and termination != "eos":
-            ctx = RoundContext(round_id, len(generated), last_round)
-            L = int(policy(ctx))
+            # snapshot so this round records per-round deltas, not cumulative
+            # totals (schema: per-round drafting/verify/controller latency)
+            comp_before = dict(sw.acc.components_ns)
+
+            # policy selection is controller work and must be inside measured
+            # time (contract: end-to-end includes controller overhead)
+            with sw.measure("controller"):
+                ctx = RoundContext(round_id, len(generated), last_round)
+                L = int(policy(ctx))
             if L not in self.cfg.action_lengths:
                 raise ValueError(f"policy returned invalid action {L}")
 
@@ -146,10 +157,14 @@ class SpeculativeDecoder:
             entropies: list[float] = []
             margins: list[float] = []
 
-            # ---- draft phase: bring draft to end of S, then propose L ------
+            # ---- draft phase: bring draft to end of S, then propose <= L ----
             # `skip` (L == 0) runs NO draft forward at all -- the draft cache is
             # left behind and re-synced (via the bounded gap) the next time we
             # draft, so skip is charged zero drafting cost (D014).
+            # A stop rule (D017) may end the draft early, so the realized length
+            # is len(proposals), not L; everything downstream uses the realized
+            # value.
+            signals_needed = record_signals or stop_rule is not None
             with sw.measure("draft"):
                 if L > 0:
                     gap = S[d_len:]  # always non-empty: draft never caches the anchor
@@ -158,10 +173,20 @@ class SpeculativeDecoder:
                         self.pair.draft, d_ids, draft_cache, d_len
                     )
                     cur_logits = d_logits[0, -1]
-                    for _ in range(L):
-                        if record_signals:
-                            entropies.append(float(entropy_from_logits(cur_logits)))
-                            margins.append(float(top1_margin_from_logits(cur_logits)))
+                    for i in range(L):
+                        if signals_needed:
+                            ent = float(entropy_from_logits(cur_logits))
+                            mar = float(top1_margin_from_logits(cur_logits))
+                            if stop_rule is not None and stop_rule(StopContext(
+                                draft_index=i,
+                                cur_entropy=ent,
+                                cur_margin=mar,
+                                proposed_so_far=tuple(proposals),
+                            )):
+                                break  # stop BEFORE proposing token i (D017)
+                            if record_signals:
+                                entropies.append(ent)
+                                margins.append(mar)
                         tok = int(greedy_token(cur_logits))
                         proposals.append(tok)
                         step_ids = torch.tensor([[tok]], device=self.device)
@@ -169,6 +194,7 @@ class SpeculativeDecoder:
                             self.pair.draft, step_ids, draft_cache, d_len
                         )
                         cur_logits = d_logits[0, -1]
+            L_real = len(proposals)
 
             # ---- verify phase: target over (gap_t + proposals) in one pass --
             with sw.measure("verify"):
@@ -177,8 +203,8 @@ class SpeculativeDecoder:
                 v_logits, target_cache, t_len = _forward(
                     self.pair.target, verify_ids, target_cache, t_len
                 )
-                # last L+1 positions predict t_1..t_{L+1}
-                tail = v_logits[0, -(L + 1):, :]
+                # last L_real+1 positions predict t_1..t_{L_real+1}
+                tail = v_logits[0, -(L_real + 1):, :]
                 target_argmax = [int(x) for x in greedy_token(tail)]
 
             # ---- commit (pure) + roll caches back --------------------------
@@ -194,29 +220,58 @@ class SpeculativeDecoder:
             draft_cache.crop(min(d_len, keep + 1))
             d_len = min(d_len, keep + 1)
 
+            # Commit emitted tokens. Stop at the FIRST committed eos — greedy
+            # reference stops there, so committing past it breaks token
+            # identity whenever eos lands inside the accepted prefix (review
+            # 2026-07-11, critical). Termination is labeled from the token
+            # actually committed, never from the uncommitted emitted suffix.
+            round_start_pos = len(generated)
             for tok in res.emitted_ids:
                 S.append(tok)
                 generated.append(tok)
+                if eos_id is not None and tok == eos_id:
+                    termination = "eos"
+                    break
                 if len(generated) >= max_new:
                     break
-            if eos_id is not None and eos_id in res.emitted_ids:
-                termination = "eos"
+
+            # D018 free verification byproducts: the frontier distribution is
+            # tail[res.accepted] -- the one that produced this round's
+            # correction/bonus token, i.e. the most recent target-side signal
+            # available before the NEXT round spends any draft compute. Gated
+            # on record_signals to avoid GPU->CPU syncs in pure-latency runs;
+            # measured as "tracing" so the sync cost stays inside end-to-end
+            # accounting (contract: tracing overhead is included).
+            if record_signals:
+                with sw.measure("tracing"):
+                    frontier = tail[res.accepted]
+                    frontier_entropy = float(entropy_from_logits(frontier))
+                    frontier_margin = float(top1_margin_from_logits(frontier))
+            else:
+                frontier_entropy = frontier_margin = None
 
             rt = RoundTrace(
                 request_id=request_id,
                 round_id=round_id,
-                start_output_pos=len(generated) - len(res.emitted_ids),
+                start_output_pos=round_start_pos,
                 requested_action=L,
-                realized_draft_len=L,
+                realized_draft_len=L_real,
                 proposed_token_ids=tuple(proposals),
                 accepted_prefix_len=res.accepted,
                 first_rejection_pos=res.first_rejection,
                 emitted_token_ids=res.emitted_ids,
                 draft_entropy=tuple(entropies),
                 draft_top1_margin=tuple(margins),
-                latency_ns=dict(sw.acc.components_ns),
+                latency_ns={
+                    k: v - comp_before.get(k, 0)
+                    for k, v in sw.acc.components_ns.items()
+                    if v - comp_before.get(k, 0) > 0
+                },
                 cache_len_before=cache_before,
                 cache_len_after=t_len,
+                target_argmax_ids=tuple(target_argmax),
+                target_entropy_frontier=frontier_entropy,
+                target_margin_frontier=frontier_margin,
             )
             rounds.append(rt)
             last_round = rt

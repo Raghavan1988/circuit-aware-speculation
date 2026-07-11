@@ -11,8 +11,8 @@ Statuses are `OPEN`, `IN_PROGRESS`, `BLOCKED`, and `DONE`. Before starting, add 
 | I03 | IN_PROGRESS | Claude | Add equivalence, rejection, and KV-cache tests | I02 | I04,I05 | Small GPU/CPU |
 | I04 | IN_PROGRESS | Claude | Implement synchronized latency instrumentation | I02 | I03,I05 | GPU |
 | I05 | IN_PROGRESS | Claude | Build dataset ingestion and prompt-grouped splits | — | I01,I03,I04 | CPU |
-| I06 | IN_PROGRESS | Claude | Implement and validate the trace writer | I02,I05 | I03,I04 | GPU/CPU |
-| I07 | OPEN | — | Run target-only, skip, and fixed-length sweep | I03,I04,I06 | — | A100/H100 |
+| I06 | DONE | Claude | Implement and validate the trace writer | I02,I05 | I03,I04 | GPU/CPU |
+| I07 | IN_PROGRESS | Claude | Run target-only, skip, and fixed-length sweep | I03,I04,I06 | — | A100/H100 |
 | I08 | DONE | Codex | Implement entropy and recent-acceptance policies | I03,I06 | I09 | Small GPU |
 | I09 | DONE | Codex | Reproduce a BanditSpec-style baseline | I03,I06 | I08 | GPU |
 | I10 | OPEN | — | Add selected-layer activation capture | I03,I06 | I11 | A100/H100 |
@@ -41,6 +41,17 @@ CPU-only and too old): the model-level bit-identity gate (`test_equivalence_gpu`
 until the GPU gate passes; no results exist yet. Run order on Modal:
 `verify_env` → paste SHAs into `cas.config` → `ingest_data` → `run_tests` →
 `smoke_decode`.
+
+## Build status (2026-07-11, Claude — I06 storage layer)
+
+- I06 writer implemented and locally verified: `cas.trace` now has extended
+  records (D018 fields: `target_argmax_ids`, frontier entropy/margin,
+  activation-artifact slot, per-position match), `validate.py` (TRACE_SCHEMA
+  invariants, pure stdlib), `writer.py` (Parquet, write-once + MANIFEST
+  checksums). Repro: `PYTHONPATH=src python -m pytest tests/test_trace_writer.py -q`
+  (14 passed; full suite 59 passed). I06 stays IN_PROGRESS until the engine
+  emits the new fields (engine wiring + D017 stop-rule seam) and one GPU run
+  round-trips through the writer on Modal.
 
 ## Build status (2026-07-10, Grok — I21 + I11)
 
