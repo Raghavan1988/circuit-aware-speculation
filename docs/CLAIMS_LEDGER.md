@@ -9,14 +9,33 @@ No claim may move to `SUPPORTED` without experiment identifiers, applicable sett
 | C01 | Draft hidden states contain acceptance information beyond entropy, margin, history, and domain. | UNTESTED | Prompt-grouped incremental comparison on held-out prompts | — | — |
 | C02 | Acceptance information becomes accessible at identifiable draft-model layers. | UNTESTED | Layerwise probes replicated across domains and a second model setting | — | — |
 | C03 | Rejection-associated directions have a controlled effect on draft–target divergence or acceptance. | UNTESTED | Dose-response intervention with random and norm-matched controls | — | — |
-| C04 | Acceptance behavior differs systematically across token categories and generation phases. | UNTESTED | Acceptance atlas with paired uncertainty and annotation validation | — | Task-conditioned acceptance behavior may be partially covered by prior work (arXiv:2604.14682); verify via I21 and position as control/context if covered |
+| C04 | Acceptance behavior differs systematically across token categories and generation phases. | UNTESTED | Acceptance atlas with paired uncertainty and annotation validation | — | Domain-level acceptance differences are prior (arXiv:2604.14682, I21 verified 2026-07-10); that work does **not** cover overlapping token-category labels or a fine-grained phase atlas — position as domain control/context. Annotation tooling landed I11 (`cas.annotate` v1.0.0); atlas evidence still pending I07+I18 |
 | C05 | Selective speculation with a skip action reduces wasted compute relative to adaptive-length baselines. | UNTESTED | Held-out comparison including all overhead | — | — |
 | C06 | The circuit-aware controller improves net latency over the best global fixed policy. | UNTESTED | Paired held-out wall-clock study with uncertainty | — | — |
 | C07 | Any controller advantage persists against the best per-domain fixed policy. | UNTESTED | Per-domain held-out comparison | — | — |
 | C08 | The signal or controller transfers under domain and traffic shift without full retuning. | UNTESTED | Shift study with calibration drift and latency regret | — | — |
 | C09 | The principal finding replicates outside the primary Qwen pair. | UNTESTED | Compatible Llama pair or approved Qwen-ratio fallback | — | — |
-| C10 | Next-round acceptance is predictable from cached verified-context representations before any draft compute, at deployable marginal cost. | UNTESTED | Prompt-grouped held-out comparison against post-draft signals (entropy, margin, learned head), with deployed-path overhead measured (I23) | — | — |
+| C10 | Next-round acceptance is predictable from cached verified-context representations before any draft compute, at deployable marginal cost. | UNTESTED | Prompt-grouped held-out comparison against post-draft signals (entropy, margin, learned head), with deployed-path overhead measured (I23) | — | I21 re-scan (2026-07-10): no primary-verified work predicts next-round acceptance from cached verified-context reps *before draft compute*. Closest are post-draft heads (SpecDec++, DSpark) and draft entropy/confidence (SVIP, SpecKV). Novelty threat low; re-check before freeze |
 | C11 | The identified acceptance representation transfers beyond independent drafts to a modern speculator family. | UNTESTED | Cross-speculator evaluation; extension work, only after the core evidence gate (D009) | — | — |
+
+
+## Landscape verification notes (I21)
+
+### 2026-07-10 — Planning-pass four-paper verification (Grok)
+
+- **Primary confirmed:** arXiv:2603.01639 (Learning to Draft / LTD — RL draft+verify throughput), arXiv:2605.02888 (SpecKV — draft confidence under compression), arXiv:2604.14682 (acceptance dynamics across cognitive domains), arXiv:2606.30265 (theory of acceptance certificates).
+- **Mirror-found item:** arXiv:2606.30265 — **primary archive confirmed** at https://arxiv.org/abs/2606.30265 (v1, 29 Jun 2026). Not a phantom.
+- **C04 verdict:** 2604.14682 is domain-grain (+ coarse early/late position bins, weak entropy–α). Does **not** pre-empt token-category/phase atlas. Status stays UNTESTED; prior work cited as control.
+- **C10 / theory:** 2606.30265 constrains a pure-theory Track B option (certificates for local acceptance events) but is not an internal localization result and does not implement pre-round prediction.
+- **Living table:** `docs/landscape.md` (authoritative). PLAN.md §3 edit proposed there as a note only.
+- Logged by Grok, 2026-07-10.
+
+### 2026-07-10 — I11 annotation tooling (not claim evidence)
+
+- Implemented `cas.annotate` (CATEGORY_SET_VERSION=v1.0.0, PHASE_SET_VERSION=v1.0.0): overlapping categories + absolute generation-phase bins; pure stream function for the I06 seam.
+- Stratified golden-sample agreement: run `PYTHONPATH=src python -m pytest tests/test_annotate.py -q -s` — agreement is script-printed, not hand-typed into this ledger as a scientific result.
+- This does **not** move C04; acceptance-atlas numbers require real decode traces (I07+).
+- Logged by Grok, 2026-07-10.
 
 ## Evidence record template
 

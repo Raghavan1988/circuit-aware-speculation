@@ -16,7 +16,7 @@ Statuses are `OPEN`, `IN_PROGRESS`, `BLOCKED`, and `DONE`. Before starting, add 
 | I08 | OPEN | — | Implement entropy and recent-acceptance policies | I03,I06 | I09 | Small GPU |
 | I09 | OPEN | — | Reproduce a BanditSpec-style baseline | I03,I06 | I08 | GPU |
 | I10 | OPEN | — | Add selected-layer activation capture | I03,I06 | I11 | A100/H100 |
-| I11 | OPEN | — | Build and validate token-category annotation | I05,I06 | I10 | CPU |
+| I11 | DONE | Grok | Build and validate token-category annotation | I05,I06 | I10 | CPU |
 | I12 | OPEN | — | Train leakage-safe layerwise acceptance probes | I10,I11 | — | GPU/CPU |
 | I13 | OPEN | — | Evaluate calibration and incremental information | I07,I08,I09,I12 | — | CPU |
 | I14 | OPEN | — | Implement compute-optimal selective speculation | I07,I13 | — | GPU |
@@ -26,7 +26,7 @@ Statuses are `OPEN`, `IN_PROGRESS`, `BLOCKED`, and `DONE`. Before starting, add 
 | I18 | OPEN | — | Generate acceptance atlas and primary figures | I11,I13,I14,I15,I16,I17 | — | CPU |
 | I19 | OPEN | — | Assemble anonymous artifact-driven journal manuscript | I18 | — | CPU |
 | I20 | OPEN | — | Run clean reproduction and evidence audit | I19 | — | GPU/CPU |
-| I21 | IN_PROGRESS | Claude | Verify landscape additions; maintain living comparison table | — | I01,I05 | CPU |
+| I21 | DONE | Grok | Verify landscape additions; maintain living comparison table | — | I01,I05 | CPU |
 | I22 | OPEN | — | Reproduce SpecDec++-style learned acceptance-head baseline | I03,I06,I10 | I08,I09 | GPU |
 | I23 | OPEN | — | Pre-round acceptance prediction from cached representations | I10,I12 | I13,I14 | GPU |
 | I24 | OPEN | — | Staged release package (benchmark, recipes, integration adapter) | I18,I20 | — | GPU/CPU |
@@ -41,6 +41,20 @@ CPU-only and too old): the model-level bit-identity gate (`test_equivalence_gpu`
 until the GPU gate passes; no results exist yet. Run order on Modal:
 `verify_env` → paste SHAs into `cas.config` → `ingest_data` → `run_tests` →
 `smoke_decode`.
+
+
+## Build status (2026-07-10, Grok — I21 + I11)
+
+- **I21 DONE:** Four planning-pass arXiv IDs verified on primary archive
+  (2603.01639, 2605.02888, 2604.14682, 2606.30265). Mirror-found item was
+  **2606.30265** — primary URL https://arxiv.org/abs/2606.30265. Living table
+  `docs/landscape.md` updated; C04/C10 impacts recorded in
+  `docs/CLAIMS_LEDGER.md`. C04 not pre-empted (domain grain only). PLAN.md §3
+  edit proposed as a note in landscape.md (not applied; Claude owns PLAN.md).
+- **I11 DONE:** `cas.annotate` (categories + phases, versions v1.0.0); interface
+  recorded as D016. Seam: pure `annotate_token(...)` for I06 writer.
+  Repro: `PYTHONPATH=src python -m pytest tests/test_annotate.py -q`
+  (21 passed; stratified agreement script-printed with `-s`).
 
 ## Acceptance criteria and artifacts
 

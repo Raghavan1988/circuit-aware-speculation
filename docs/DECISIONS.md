@@ -116,3 +116,19 @@ Use dated entries with context, decision, alternatives, and consequences. Do not
   3. **Draft KV cache: persistent with rollback, validated against a stateless oracle.** The draft keeps its cache across rounds and truncates in lockstep with the target after each round. Rationale: stateless re-prefill imposes a fixed per-round overhead independent of draft length ℓ that would inflate inter-token latency AND, more damagingly, tilt the per-round-optimal-length landscape toward longer ℓ while penalizing the skip/short-length policies — biasing the adaptive-vs-fixed comparison in our own favor. Build the stateless version first as a correctness oracle; prove the persistent version emits identical tokens; measure only with the persistent version.
 - **Alternatives:** SDPA or FlashAttention-2 (faster, but capture-hostile / would force a backend switch between timing and probing); strict zero-tolerance or distributional equivalence; stateless re-prefill.
 - **Consequences:** I03 correctness tests include a stateless-vs-persistent token-identity check and an FP-divergence-rate measurement. Timing numbers are relative, not production-absolute; the absolute claim is deferred to the serving-engine tier. Any later switch to a fused backend for a specific measurement must be recorded and must re-verify equivalence.
+
+
+## D016 — Token annotation interface (I11)
+
+- **Date:** 2026-07-10
+- **Context:** Issue I11 needs a versioned, overlapping category set and generation-phase label for the token-trace schema. The annotator must integrate with the I06 trace writer without depending on torch or loading a tokenizer inside the hot path.
+- **Decision:**
+  1. **Module:** `cas.annotate` with pure functions of the decoded token stream.
+  2. **Signature:** `annotate_token(token_id: int, piece: str, position: int, context_pieces: list[str]) -> AnnotatedToken` where `AnnotatedToken` has `categories: frozenset[str]`, `phase: str`, `category_set_version: str`, and `phase_set_version: str`.
+  3. **Overlap preserved:** categories are a set (may be empty only for pathological inputs; typical tokens emit ≥1 label). No mutually exclusive forced taxonomy.
+  4. **Versions:** `CATEGORY_SET_VERSION = "v1.0.0"` and `PHASE_SET_VERSION = "v1.0.0"`; bump on any rule or bin change (TRACE_SCHEMA invariant 7).
+  5. **Phases:** absolute bins over 0-indexed generation position — `prefix` [0, 32), `mid` [32, 128), `late` [128, ∞). Offline relative tertiles via `annotate_phase_relative` / `annotate_sequence(..., relative_phase=True)`.
+  6. **Categories (v1):** whitespace, punctuation, code_delimiter, function_word, content_word, number, operator, named_entity, sentence_boundary, clause_boundary, reasoning_transition, repeated_span, newline, special — matching the acceptance-atlas list in RESEARCH_SPEC.md plus newline/special operational labels.
+  7. **Validation:** seeded stratified golden sample in `tests/test_annotate.py`; agreement is script-computed, never hand-typed into result tables.
+- **Alternatives:** spaCy/NER pipeline (heavier, non-reproducible without model pins); mutually exclusive BIO tags (loses ambiguity the atlas needs); phase as fraction of max_new_tokens only (not streaming-friendly).
+- **Consequences:** I06 writer should call `annotate_token` per proposed/target token and store `categories` (sorted list or set), `phase`, and both version strings. No edits to `cas.trace` from this decision — seam only. Re-annotation of historical traces is possible offline via `annotate_sequence` when pieces are retained.
