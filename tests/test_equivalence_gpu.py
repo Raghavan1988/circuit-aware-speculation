@@ -124,23 +124,64 @@ def test_d018_fields_recorded(decoder):
         assert "prefill" not in rt.latency_ns
 
 
-def test_fp_divergence_rate(decoder):
-    """Characterize (not gate) the floating-point tie divergence rate across
-    prompts and lengths, so the 'lossless' claim can be stated honestly."""
+def test_fp_divergence_rate_per_token(decoder):
+    """Characterize (not gate) the PER-TOKEN argmax-flip rate between the
+    batched-verify and sequential-decode target forwards, and confirm every
+    flip is a genuine floating-point near-tie.
+
+    Sequence-level divergence is the wrong denominator: one flipped token
+    derails the whole greedy continuation, so it reports ~50% in bf16 while the
+    per-token cause is ~1e-2-scale argmax ties (D014.2; see CLAIMS_LEDGER
+    2026-07-10). This test isolates the cause by teacher-forcing the target
+    over a fixed reference sequence two ways and comparing argmax per position:
+
+      * sequential truth: `ref` itself — each ref token is the target's greedy
+        argmax at its own prefix (produced one token per forward);
+      * batched: one forward over prompt+ref (the verify code path), whose
+        argmax at each position is conditioned on the identical causal prefix.
+
+    A flip is a position where the two argmaxes differ; at each flip we record
+    the batched top-1/top-2 logit margin, which must be ~0 (a near-tie) for the
+    'lossless up to logged argmax ties' claim to hold honestly.
+    """
+    import torch
+
+    from cas.signals import top1_margin_from_logits
+    from cas.spec_decode import _forward
+
     dec, pair = decoder
-    total = mism = 0
-    for length in (2, 4, 8):
-        for prompt in PROMPTS:
-            ids = pair.tokenizer(prompt)["input_ids"]
-            ref = dec.greedy_reference(ids)
-            res = dec.generate(ids, fixed_length_policy(length),
-                               request_id="fp", policy_name=f"fixed_{length}")
+    total = flips = 0
+    flip_margins = []
+    for prompt in PROMPTS:
+        prompt_ids = pair.tokenizer(prompt)["input_ids"]
+        ref = dec.greedy_reference(prompt_ids)
+        if not ref:
+            continue
+        full = prompt_ids + ref
+        ids = torch.tensor([full], device=dec.device)
+        from transformers import DynamicCache
+        logits, _, _ = _forward(pair.target, ids, DynamicCache(), 0)
+        # position (len(prompt)-1+i) predicts ref[i]; compare to sequential ref
+        base = len(prompt_ids) - 1
+        for i in range(len(ref)):
+            pos = base + i
+            row = logits[0, pos]
+            batched_argmax = int(row.argmax())
             total += 1
-            if res.output_ids != ref:
-                mism += 1
-    rate = mism / total if total else 0.0
-    print(f"fp-tie divergence rate: {mism}/{total} = {rate:.4f}")
-    assert rate < 0.05  # generous ceiling; expected <0.001
+            if batched_argmax != ref[i]:
+                flips += 1
+                flip_margins.append(float(top1_margin_from_logits(row)))
+    rate = flips / total if total else 0.0
+    max_margin = max(flip_margins) if flip_margins else 0.0
+    print(f"per-token argmax-flip rate: {flips}/{total} = {rate:.5f}; "
+          f"max top1-top2 margin at a flip = {max_margin:.2e}")
+    # Characterization ceiling, not a hard gate: per-token flips are rare and,
+    # when they occur, are near-ties. Wide bound tolerates dtype/hardware drift.
+    assert rate < 0.05, f"per-token flip rate {rate:.5f} unexpectedly high"
+    if flip_margins:
+        assert max_margin < 0.05, (
+            f"a flip occurred at margin {max_margin:.2e} — not a near-tie; "
+            f"investigate for a real bug, not fp noise")
 
 
 def _first_diff(a, b):
