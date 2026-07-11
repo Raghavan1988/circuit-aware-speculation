@@ -14,7 +14,7 @@ Statuses are `OPEN`, `IN_PROGRESS`, `BLOCKED`, and `DONE`. Before starting, add 
 | I06 | DONE | Claude | Implement and validate the trace writer | I02,I05 | I03,I04 | GPU/CPU |
 | I07 | IN_PROGRESS | Claude | Run target-only, skip, and fixed-length sweep | I03,I04,I06 | — | A100/H100 |
 | I08 | DONE | Codex | Implement entropy and recent-acceptance policies | I03,I06 | I09 | Small GPU |
-| I09 | IN_PROGRESS | Codex | Reproduce a BanditSpec-style baseline | I03,I06 | I08 | GPU |
+| I09 | DONE | Codex | Reproduce a BanditSpec-style baseline | I03,I06 | I08 | GPU |
 | I10 | OPEN | — | Add selected-layer activation capture | I03,I06 | I11 | A100/H100 |
 | I11 | DONE | Grok | Build and validate token-category annotation | I05,I06 | I10 | CPU |
 | I12 | OPEN | — | Train leakage-safe layerwise acceptance probes | I10,I11 | — | GPU/CPU |
@@ -72,20 +72,27 @@ until the GPU gate passes; no results exist yet. Run order on Modal:
   frozen constructor hyperparameters, threshold boundaries, skip handling, and
   request resets are unit-tested. The engine consult point is recorded in D017
   for Claude to wire after I06.
-- **I09 DONE:** UCBSpec-style length-arm policy with round-robin cold start,
+- **I09 DONE (round 1; superseded by D019):** UCBSpec-style length-arm policy with round-robin cold start,
   accepted-plus-bonus reward, and the published confidence radius. Deviations
   are disclosed in the module and claims ledger. Repro:
   `PYTHONPATH=src python -m pytest tests/test_policies.py -q` (7 passed).
 
 ## Build status (2026-07-11, Codex — I09 round-2 repair)
 
-- **I09 REOPENED / IN PROGRESS:** D018 identified that the original
-  accepted-plus-bonus reward does not price round latency and therefore cannot
-  learn a speed-optimal length policy. Round 2 retains that selector as a
-  disclosed naive baseline and adds a latency-aware selector whose frozen
-  per-action costs must be injected from development traces. Survival/hazard
-  controller scaffolding is being implemented in the policy lane; it does not
-  claim I14 completion or consume test traces.
+- **I09 DONE:** D019 retains the original accepted-plus-bonus selector as
+  `UCBSpecNaive` and repairs the primary selector with emitted tokens per frozen,
+  development-measured action cost. The reward and confidence radius share
+  throughput units. Deterministic tests cover poor-acceptance convergence away
+  from an expensive `L=8`, cost-unit invariance, early draft stopping, invalid
+  costs, frozen inputs, and request reset.
+- **D018 policy scaffolding complete:** conditional-continuation survival,
+  expected-yield/cost action selection, same-round counterfactual labels,
+  prompt-grouped label-aware Platt calibration, and the optional
+  confidence-abstaining probe-prior UCB interface are pure stdlib. Terminal rows
+  are explicitly rejected by the nominal-yield label adapter. This is tooling
+  only: I14 remains OPEN and no test traces were consumed.
+- Repro: `PYTHONPATH=src python -m pytest tests/test_policies.py
+  tests/test_survival.py -q` (32 passed).
 
 ## Build status (2026-07-11, Grok — I21 round 2)
 

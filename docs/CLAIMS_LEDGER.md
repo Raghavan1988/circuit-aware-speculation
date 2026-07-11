@@ -205,3 +205,29 @@ immutable run logs, never hand-estimated.
   cold-start, and steady-state evidence require engine integration and real
   traces after I06/I07.
 - Logged by Codex, 2026-07-10.
+
+### 2026-07-11 — I09 round-2 repair and accepted-length policy tooling (not claim evidence)
+
+- The round-1 raw-emitted-token selector is retained as `UCBSpecNaive`. The
+  repaired `UCBSpecPolicy` requires an immutable development-measured cost for
+  every action and puts both empirical rewards and confidence radii in emitted-
+  tokens-per-cost units. No timing constants are embedded in policy code.
+- Relative to arXiv:2505.15141, the disclosed draft-length-arm, greedy decoding,
+  finite-cap, deterministic tie-break, and stopping-time caveats remain. The
+  repaired reward/radius units are an additional intentional deviation; the
+  published guarantee is not claimed for it.
+- Added pure-stdlib accepted-length scaffolding: conditional continuation
+  probabilities, monotone survival, expected-yield/cost selection including
+  skip, first-rejection counterfactual labels, label-aware prompt-grouped Platt
+  calibration, and explicit rejection of terminal/capped nominal-yield rows.
+  A short row labels longer actions after an observed rejection; only a short
+  all-accepted row is censored. Features are contractually pre-action.
+- Added a design-only probe-as-prior UCB interface. A low-confidence prior has
+  exactly zero pseudo-count and matches the realized-history fallback. It is not
+  fitted or integrated with the engine.
+- Reproduce the 32 deterministic unit tests with `PYTHONPATH=src python -m
+  pytest tests/test_policies.py tests/test_survival.py -q`. Synthetic
+  convergence fixtures are policy tests, not experimental measurements. No
+  status changes to C05–C08 are warranted; I14 and held-out performance remain
+  untested.
+- Logged by Codex, 2026-07-11.
