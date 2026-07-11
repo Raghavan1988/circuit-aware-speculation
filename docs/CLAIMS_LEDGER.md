@@ -55,10 +55,19 @@ immutable run logs, never hand-estimated.
   Back-solving 50%/sequence over 96 tokens ⇒ **~0.7% per-token** argmax flip; one
   flip derails the rest of the greedy continuation. Cache/commit bookkeeping was
   re-derived by hand for k=0, 0<k<L, and k=L and is correct.
-- **Next step (no claim asserted until run):** (1) re-run the gate with
-  `CAS_DTYPE=float32` to confirm exact algorithmic identity (expect 0 divergence);
-  (2) re-characterize bf16 with a per-token rate + logged top-1/top-2 margins at
-  each flip; (3) record the measured rate as a D014 addendum and set the test
-  ceiling per-token. Until (1) passes, I03 stays IN_PROGRESS and no losslessness
-  claim is made.
+- **fp32 confirmation (RESOLVED):** `CAS_GPU=A100 modal run
+  modal_app.py::run_tests --dtype float32` (Modal app `ap-ECNFNMgvfLdXnXdFBQYMSQ`),
+  in-container dtype verified `EngineConfig.target.dtype='float32'`. **25 passed,
+  0 failed**; `test_fp_divergence_rate` = 0/12. The cache/commit/rollback and
+  batched-verify logic are therefore algorithmically exact; the bf16 gate failure
+  was floating-point argmax-tie noise, not a bug. (A prior attempt setting
+  `CAS_DTYPE` as a local env var did NOT reach the Modal container and silently
+  re-ran bf16 — hence dtype is now passed as a function arg with an in-container
+  assert.)
+- **Remaining (reporting/calibration, not code):** (a) change
+  `test_fp_divergence_rate` to a per-token rate with logged top-1/top-2 margins at
+  each flip; (b) record the measured bf16 per-token rate as a dated D014 addendum
+  (the "<0.1%" figure was fp32-calibrated). I03 algorithmic correctness is
+  confirmed; the bf16 losslessness statement is "lossless up to logged argmax
+  ties at the measured rate."
 - Logged by Claude, 2026-07-10.

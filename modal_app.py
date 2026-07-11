@@ -135,8 +135,25 @@ def smoke_decode(prompt: str = "def fibonacci(n):", max_new_tokens: int = 64) ->
 
 
 @app.function(image=image, gpu=GPU, volumes=VOLUMES, timeout=3600)
-def run_tests() -> int:
-    """Run the full test suite (pure + GPU equivalence) on the H100."""
+def run_tests(dtype: str = "bfloat16") -> int:
+    """Run the full test suite (pure + GPU equivalence) on the GPU.
+
+    `dtype` is passed as a Modal function arg (NOT a local env var, which does
+    not cross into the remote container) and injected into the child pytest
+    process's environment as CAS_DTYPE. Use `--dtype float32` to run the
+    equivalence gate in fp32 and isolate algorithmic correctness from bf16
+    argmax-tie noise. Prints the resolved model dtype so it can be verified.
+    """
+    import os
     import subprocess
+
+    os.environ["CAS_DTYPE"] = dtype  # inherited by the child pytest process
+
+    # Verify the override actually reaches the config the tests will load.
+    from cas.config import EngineConfig
+
+    resolved = EngineConfig().target.dtype
+    print(f"run_tests: requested dtype={dtype!r} -> EngineConfig.target.dtype={resolved!r}")
+    assert resolved == dtype, "CAS_DTYPE did not propagate to EngineConfig"
 
     return subprocess.call(["python", "-m", "pytest", "-q", "/root/tests"])

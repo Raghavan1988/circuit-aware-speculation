@@ -11,7 +11,7 @@ Statuses are `OPEN`, `IN_PROGRESS`, `BLOCKED`, and `DONE`. Before starting, add 
 | I03 | IN_PROGRESS | Claude | Add equivalence, rejection, and KV-cache tests | I02 | I04,I05 | Small GPU/CPU |
 | I04 | IN_PROGRESS | Claude | Implement synchronized latency instrumentation | I02 | I03,I05 | GPU |
 | I05 | IN_PROGRESS | Claude | Build dataset ingestion and prompt-grouped splits | — | I01,I03,I04 | CPU |
-| I06 | OPEN | — | Implement and validate the trace writer | I02,I05 | I03,I04 | GPU/CPU |
+| I06 | IN_PROGRESS | Claude | Implement and validate the trace writer | I02,I05 | I03,I04 | GPU/CPU |
 | I07 | OPEN | — | Run target-only, skip, and fixed-length sweep | I03,I04,I06 | — | A100/H100 |
 | I08 | OPEN | — | Implement entropy and recent-acceptance policies | I03,I06 | I09 | Small GPU |
 | I09 | OPEN | — | Reproduce a BanditSpec-style baseline | I03,I06 | I08 | GPU |
