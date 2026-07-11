@@ -14,7 +14,7 @@ Statuses are `OPEN`, `IN_PROGRESS`, `BLOCKED`, and `DONE`. Before starting, add 
 | I06 | DONE | Claude | Implement and validate the trace writer | I02,I05 | I03,I04 | GPU/CPU |
 | I07 | IN_PROGRESS | Claude | Run target-only, skip, and fixed-length sweep | I03,I04,I06 | — | A100/H100 |
 | I08 | DONE | Codex | Implement entropy and recent-acceptance policies | I03,I06 | I09 | Small GPU |
-| I09 | DONE | Codex | Reproduce a BanditSpec-style baseline | I03,I06 | I08 | GPU |
+| I09 | IN_PROGRESS | Codex | Reproduce a BanditSpec-style baseline | I03,I06 | I08 | GPU |
 | I10 | OPEN | — | Add selected-layer activation capture | I03,I06 | I11 | A100/H100 |
 | I11 | DONE | Grok | Build and validate token-category annotation | I05,I06 | I10 | CPU |
 | I12 | OPEN | — | Train leakage-safe layerwise acceptance probes | I10,I11 | — | GPU/CPU |
@@ -76,6 +76,32 @@ until the GPU gate passes; no results exist yet. Run order on Modal:
   accepted-plus-bonus reward, and the published confidence radius. Deviations
   are disclosed in the module and claims ledger. Repro:
   `PYTHONPATH=src python -m pytest tests/test_policies.py -q` (7 passed).
+
+## Build status (2026-07-11, Codex — I09 round-2 repair)
+
+- **I09 REOPENED / IN PROGRESS:** D018 identified that the original
+  accepted-plus-bonus reward does not price round latency and therefore cannot
+  learn a speed-optimal length policy. Round 2 retains that selector as a
+  disclosed naive baseline and adds a latency-aware selector whose frozen
+  per-action costs must be injected from development traces. Survival/hazard
+  controller scaffolding is being implemented in the policy lane; it does not
+  claim I14 completion or consume test traces.
+
+## Build status (2026-07-11, Grok — I21 round 2)
+
+- **I21 DONE (round-2 maintenance):** Corrections + sweep additions in
+  `docs/landscape.md` and `docs/CLAIMS_LEDGER.md`. Primary-verified:
+  Not-a-Bandit ID → **2510.20064** (2506.00285 is unrelated POMDP paper);
+  DSpark **not** an SGLang ship (authors' production stack / live traffic);
+  AdaEAGLE, Judge Decoding, WhiFlash, C2T, Sequoia, DISCO, AdaEDL, DSDE,
+  TurboSpec, CaDDTree, SemanticSpec (full text), and methodology trio
+  2509.10625 / 2606.14530 / 2506.08572. G2: SemanticSpec does not scoop
+  C01 controlled study or C10 pre-round cell. G3: deployed-practice section
+  (vLLM Dynamic SD, SGLang adaptive EMA, TensorRT-LLM static max_draft_len).
+  G4: C04 domain-control positioning for the atlas. C10 claims-table cell
+  updated with the three narrowing papers. PLAN.md edits proposed as notes
+  only (Claude owns PLAN.md). Did not touch Claude engine/trace/analysis
+  code or Codex policy modules.
 
 ## Acceptance criteria and artifacts
 

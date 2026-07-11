@@ -15,7 +15,7 @@ No claim may move to `SUPPORTED` without experiment identifiers, applicable sett
 | C07 | Any controller advantage persists against the best per-domain fixed policy. | UNTESTED | Per-domain held-out comparison | — | — |
 | C08 | The signal or controller transfers under domain and traffic shift without full retuning. | UNTESTED | Shift study with calibration drift and latency regret | — | — |
 | C09 | The principal finding replicates outside the primary Qwen pair. | UNTESTED | Compatible Llama pair or approved Qwen-ratio fallback | — | — |
-| C10 | Next-round acceptance is predictable from cached verified-context representations before any draft compute, at deployable marginal cost. | UNTESTED | Prompt-grouped held-out comparison against post-draft signals (entropy, margin, learned head), with deployed-path overhead measured (I23) | — | I21 re-scan (2026-07-10): no primary-verified work predicts next-round acceptance from cached verified-context reps *before draft compute*. Closest are post-draft heads (SpecDec++, DSpark) and draft entropy/confidence (SVIP, SpecKV). Novelty threat low; re-check before freeze |
+| C10 | Next-round acceptance is predictable from cached verified-context representations before any draft compute, at deployable marginal cost. | UNTESTED | Prompt-grouped held-out comparison against post-draft signals (entropy, margin, learned head), with deployed-path overhead measured (I23) | — | **Narrowed 2026-07-11 (I21 R2):** AdaEAGLE (2412.18910; pre-draft length from target verified-context features, EAGLE, uncalibrated, no skip/baselines); Judge Decoding (2501.19309; target-embedding judge **during verify**, relaxes losslessness); WhiFlash (2606.07710; pre-draft drafter routing). Full C10 cell (lossless, calibrated, baseline-controlled, independent drafter, skip-capable) still unoccupied. Baselines must include free frontier entropy/margin at last verified position (cf. 2606.30265). SemanticSpec (2602.03708) does not scoop (mid-verify semantic-relaxed probes). See landscape.md + ledger notes |
 | C11 | The identified acceptance representation transfers beyond independent drafts to a modern speculator family. | UNTESTED | Cross-speculator evaluation; extension work, only after the core evidence gate (D009) | — | — |
 
 ## Landscape verification notes (I21)
@@ -65,6 +65,46 @@ No claim may move to `SUPPORTED` without experiment identifiers, applicable sett
   paper text does not mention SGLang — the landscape's "SGLang release"
   attribution needs re-verification.
 - Logged by Claude, 2026-07-11.
+
+### 2026-07-11 — I21 round-2 landscape corrections + G2 SemanticSpec (Grok)
+
+- **ID correction applied:** Not-a-Bandit primary arXiv ID is **2510.20064**
+  (title matches). Prior landscape ID **2506.00285** is *Lazy Heuristic Search
+  for Solving POMDPs…* (cs.RO) — unrelated; removed as Not-a-Bandit cite.
+  PLAN.md §3 still needs Claude's one-line ID fix if it retained 2506.00285.
+- **DSpark system attribution corrected:** arXiv:2607.05147 abstract deploys
+  confidence-scheduled speculative decoding in the **authors' production
+  serving stack under live user traffic** (vs MTP-1 baseline). Full text does
+  not ship DSpark as an SGLang feature; prior landscape "DSpark in SGLang"
+  row was wrong. Corrected in `docs/landscape.md`. Phase-2 engine reasoning
+  that cited SGLang+DSpark should be re-read by PLAN owner.
+- **Sweep additions primary-verified and tabled:** AdaEAGLE (2412.18910),
+  Judge Decoding (2501.19309), WhiFlash (2606.07710), C2T (2502.13652),
+  Sequoia (2402.12374), DISCO (2405.04304), AdaEDL (2410.18351),
+  DSDE (2509.01083), TurboSpec (2406.14066), CaDDTree (2606.01813),
+  plus methodology context 2509.10625 / 2606.14530 / 2506.08572.
+- **G2 SemanticSpec (2602.03708) full-text verdict:** Probes multi-layer
+  hidden states of **draft and target** during **verification of semantic
+  sequences** to estimate semantic probability; accepts with a
+  semantic-aware (non-token-exact) rule. Does **not** run incremental
+  information vs entropy/margin/history/domain. Does **not** predict
+  next-round acceptance from cached verified context before draft compute.
+  **C01 science claim (controlled incremental-info study): not scooped.**
+  **C10 pre-round lossless cell: not scooped.** Cite as adjacent internal-
+  state speculation control under a relaxed correctness contract.
+- **G3 deployed practice:** vLLM = static K + batch-size-tiered Dynamic SD
+  (`num_speculative_tokens_per_batch_size`) + historical queue auto-disable;
+  SGLang = EMA-of-accept-length adaptive step tiers (EAGLE/EAGLE3 only);
+  TensorRT-LLM = static `max_draft_len`, no dynamic length path in one-model
+  docs. Cheap systems baselines for I13/I14; documented in landscape
+  §Deployed practice with doc links.
+- **G4 C04 positioning:** Atlas must (1) reproduce domain-marginal acceptance
+  as control matching 2604.14682, then (2) add category×phase within domain
+  as the new axis. Full note in landscape.md §C04 domain-control positioning.
+- **C10 claims-table cell updated** to name the three narrowing papers.
+- Living table: `docs/landscape.md` (authoritative). PLAN.md edits proposed
+  as notes only.
+- Logged by Grok, 2026-07-11.
 
 ## Evidence record template
 
