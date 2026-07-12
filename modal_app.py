@@ -447,7 +447,8 @@ def sens(run_id: str = "sweep-2026-07-11T203836"):
 
 @app.function(image=image, gpu=GPU, volumes=VOLUMES, timeout=3600)
 def bench_draft(run_id: str = "sweep-2026-07-11T203836", context_len: int = 128,
-                n_warmup: int = 5, n_iter: int = 25, gap: int = 5) -> dict:
+                n_warmup: int = 5, n_iter: int = 25, gap: int = 5,
+                attn: str = "eager") -> dict:
     """T3.4: clean draft/verify latency, all actions in ONE container (removes
     the cross-container jitter confound C2), decomposed into fixed (gap catch-up)
     and per-token cost, under four configs:
@@ -474,11 +475,24 @@ def bench_draft(run_id: str = "sweep-2026-07-11T203836", context_len: int = 128,
     from cas.spec_decode import _forward
     from scripts.run_t3_analysis import _match_vectors, _read_parquet
 
+    import dataclasses
+
     torch.set_grad_enabled(False)
     ACTIONS = [1, 2, 3, 4, 6, 8]
     cfg = EngineConfig()
+    # T3.4-b: override attention impl for the timing fork (does NOT touch the
+    # eager capture path; this is a benchmark-only config). "sdpa"/"flash_
+    # attention_2" fuse attention kernels -> fewer launches -> tests launch-bound.
+    if attn != "eager":
+        cfg = dataclasses.replace(
+            cfg,
+            target=dataclasses.replace(cfg.target, attn_implementation=attn),
+            draft=dataclasses.replace(cfg.draft, attn_implementation=attn),
+        )
     pair = load_pair(cfg)
     dev = pair.device
+    print(f"attn_implementation={attn}  "
+          f"draft.attn={cfg.draft.attn_implementation}")
 
     with open("/artifacts/data/prompts.jsonl") as f:
         row = json.loads(f.readline())
@@ -578,10 +592,10 @@ def bench_draft(run_id: str = "sweep-2026-07-11T203836", context_len: int = 128,
         print(f"  [{mode}] best_fixed L={h['best_fixed_L']:>2}  "
               f"headroom={h['headroom_pct']:>6.2f}%  -> {gate}")
 
-    out = {"gap_ms": gap_ms, "verify0_ms": verify0_ms, "verify_ms": verify_ms,
-           "draft_ms": draft, "per_tok_ms": per_tok, "headroom": headroom,
-           "context_len": ctx.shape[1], "n_iter": n_iter}
-    path = f"/artifacts/analysis/{run_id}/t3_4_bench.json"
+    out = {"attn": attn, "gap_ms": gap_ms, "verify0_ms": verify0_ms,
+           "verify_ms": verify_ms, "draft_ms": draft, "per_tok_ms": per_tok,
+           "headroom": headroom, "context_len": ctx.shape[1], "n_iter": n_iter}
+    path = f"/artifacts/analysis/{run_id}/t3_4_bench_{attn}.json"
     with open(path, "w") as f:
         json.dump(out, f, indent=2, sort_keys=True)
     artifacts.commit()
@@ -590,5 +604,5 @@ def bench_draft(run_id: str = "sweep-2026-07-11T203836", context_len: int = 128,
 
 
 @app.local_entrypoint()
-def bench(run_id: str = "sweep-2026-07-11T203836"):
-    bench_draft.remote(run_id)
+def bench(run_id: str = "sweep-2026-07-11T203836", attn: str = "eager"):
+    bench_draft.remote(run_id, attn=attn)
