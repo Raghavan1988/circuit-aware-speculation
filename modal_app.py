@@ -221,6 +221,14 @@ def run_policy(
     policies = list(SWEEP_POLICIES) if policy == "all" else [policy]
     results = {}
     for pol in policies:
+        # Resume/skip: a sealed policy dir (write-once) is never recomputed, so
+        # a killed sweep can be relaunched with the SAME run_id and continues
+        # where it stopped (e.g. target_only already done -> not rerun).
+        pol_manifest = f"/artifacts/traces/{run_id}/{pol}/MANIFEST.json"
+        if os.path.exists(pol_manifest):
+            print(f"{pol} -> already sealed, skipping")
+            results[pol] = {"skipped": True}
+            continue
         refs = {}
         if pol != "target_only" and os.path.exists(ref_path):
             with open(ref_path) as f:
@@ -254,7 +262,14 @@ def run_policy(
         writer = TraceWriter(f"/artifacts/traces/{run_id}/{pol}", meta)
         hashes = {}
         n_ident = n_div = 0
-        for row in rows:
+        import time as _time
+        t_pol = _time.time()
+        for j, row in enumerate(rows):
+            if j and j % 50 == 0:  # progress + live throughput (observability)
+                rate = (_time.time() - t_pol) / j
+                eta = rate * (len(rows) - j)
+                print(f"{pol}: {j}/{len(rows)} prompts "
+                      f"({rate:.2f}s/prompt, ETA {eta/60:.1f} min)", flush=True)
             pid = row["prompt_id"]
             prompt_ids = tok(row["prompt_text"])["input_ids"]
             common = dict(dataset=row["dataset"], domain=row["domain"],
@@ -302,9 +317,11 @@ def run_policy(
             with open(ref_path, "w") as f:
                 json.dump(hashes, f)
         artifacts.commit()
-        results[pol] = {"requests": m["n_requests"],
-                        "identical": n_ident, "diverged": n_div}
-        print(pol, "->", results[pol])
+        secs = _time.time() - t_pol
+        results[pol] = {"requests": m["n_requests"], "identical": n_ident,
+                        "diverged": n_div, "secs": round(secs, 1),
+                        "s_per_prompt": round(secs / max(len(rows), 1), 2)}
+        print(pol, "->", results[pol], flush=True)
         torch.cuda.empty_cache()  # avoid fragmentation across policies
     return results
 
@@ -377,3 +394,201 @@ def run_tests(dtype: str = "bfloat16") -> int:
     assert resolved == dtype, "CAS_DTYPE did not propagate to EngineConfig"
 
     return subprocess.call(["python", "-m", "pytest", "-q", "/root/tests"])
+
+
+@app.function(image=image, volumes=VOLUMES, timeout=2 * 3600)  # CPU-only
+def analyze(run_id: str, eval_split: str = "dev") -> dict:
+    """T3 measurement analysis over a sealed sweep (oracle headroom, surface
+    baselines, acceptance atlas). Pure CPU on the sealed corpus; writes a
+    script-generated JSON report to the artifacts volume and returns it.
+    """
+    from scripts.run_t3_analysis import _print_summary, run
+
+    run_dir = f"/artifacts/traces/{run_id}"
+    out_path = f"/artifacts/analysis/{run_id}/t3_report.json"
+    rep = run(run_dir, out_path, eval_split)
+    _print_summary(rep)
+    artifacts.commit()  # persist the written report to the volume
+    print(f"\nwrote {out_path}")
+    o = rep["t3_1_oracle_headroom"]
+    return {"compute_headroom": o["compute_basis"]["headroom"],
+            "full_headroom": o["full_basis"]["headroom"]}
+
+
+@app.local_entrypoint()
+def t3(run_id: str = "sweep-2026-07-11T203836", eval_split: str = "dev"):
+    """Run T3 analysis remotely on a CPU container."""
+    analyze.remote(run_id, eval_split)
+
+
+@app.function(image=image, volumes=VOLUMES, timeout=1800)  # CPU-only
+def sensitivity(run_id: str) -> dict:
+    """(a) Oracle-headroom cost-sensitivity: what the headroom becomes under a
+    range of hypothetical draft costs, on the sealed match vectors. Pure CPU."""
+    import json as _json
+
+    from scripts.run_t3_analysis import cost_sensitivity
+
+    res = cost_sensitivity(f"/artifacts/traces/{run_id}")
+    print("=== CONFOUND CHECKS ===")
+    print(_json.dumps(res["confounds"], indent=2, sort_keys=True))
+    print("\n=== HEADROOM vs HYPOTHETICAL DRAFT COST ===")
+    print(f"{'draft ms/tok':>12} {'best fixed L':>13} {'headroom %':>11}")
+    for r in res["sweep"]:
+        print(f"{r['draft_ms_per_token']:>12} {r['best_fixed_L']:>13} "
+              f"{r['headroom_pct']:>11}")
+    return res
+
+
+@app.local_entrypoint()
+def sens(run_id: str = "sweep-2026-07-11T203836"):
+    sensitivity.remote(run_id)
+
+
+@app.function(image=image, gpu=GPU, volumes=VOLUMES, timeout=3600)
+def bench_draft(run_id: str = "sweep-2026-07-11T203836", context_len: int = 128,
+                n_warmup: int = 5, n_iter: int = 25, gap: int = 5) -> dict:
+    """T3.4: clean draft/verify latency, all actions in ONE container (removes
+    the cross-container jitter confound C2), decomposed into fixed (gap catch-up)
+    and per-token cost, under four configs:
+
+      A as-run   : per-token entropy+margin+argmax with float()/int() syncs
+      B sig-off  : per-token argmax sync only (int to feed next token)
+      C batched  : NO per-token sync (argmax stays on-device); signals batched
+                   once after the loop  <- deployment-realistic
+      D floor    : C without any signals (pure incremental decode floor)
+
+    Then rebuilds the oracle cost profile from the measured *config-C* costs and
+    recomputes headroom on the sealed fixed_8 match vectors -> the real M3 number.
+    """
+    import json
+
+    import torch
+    from transformers import DynamicCache
+
+    from cas.analysis.oracle import oracle_policy_value
+    from cas.config import EngineConfig
+    from cas.models import load_pair
+    from cas.signals import (entropy_from_logits, greedy_token,
+                             top1_margin_from_logits)
+    from cas.spec_decode import _forward
+    from scripts.run_t3_analysis import _match_vectors, _read_parquet
+
+    torch.set_grad_enabled(False)
+    ACTIONS = [1, 2, 3, 4, 6, 8]
+    cfg = EngineConfig()
+    pair = load_pair(cfg)
+    dev = pair.device
+
+    with open("/artifacts/data/prompts.jsonl") as f:
+        row = json.loads(f.readline())
+    ids = pair.tokenizer(row["prompt_text"])["input_ids"][:context_len]
+    if len(ids) < 8:
+        ids = (ids * 8)[:context_len]
+    ctx = torch.tensor([ids], device=dev)
+
+    def median_ms(fn):
+        for _ in range(n_warmup):
+            fn()
+        torch.cuda.synchronize()
+        ts = []
+        for _ in range(n_iter):
+            s = torch.cuda.Event(enable_timing=True)
+            e = torch.cuda.Event(enable_timing=True)
+            s.record(); fn(); e.record(); torch.cuda.synchronize()
+            ts.append(s.elapsed_time(e))
+        ts.sort()
+        return ts[len(ts) // 2]
+
+    # warm caches
+    d_cache = DynamicCache()
+    d_logits, d_cache, d_ctx = _forward(pair.draft, ctx, d_cache, 0)
+    cur0 = d_logits[0, -1].clone()
+    t_cache = DynamicCache()
+    _, t_cache, t_ctx = _forward(pair.target, ctx, t_cache, 0)
+
+    def draft_loop(L, mode):
+        cur = cur0
+        stack = []
+        for i in range(L):
+            if mode == "A":
+                _ = float(entropy_from_logits(cur))
+                _ = float(top1_margin_from_logits(cur))
+            if mode in ("A", "B"):
+                tok = int(greedy_token(cur))               # host sync
+                nxt = torch.tensor([[tok]], device=dev)
+            else:                                          # C, D: no sync
+                nxt = greedy_token(cur).view(1, 1)
+            dl, _c, _ = _forward(pair.draft, nxt, d_cache, d_ctx + i)
+            cur = dl[0, -1]
+            if mode == "C":
+                stack.append(cur)
+        if mode == "C" and stack:
+            st = torch.stack(stack)
+            _ = entropy_from_logits(st)                    # batched, one shot
+            _ = top1_margin_from_logits(st)
+        d_cache.crop(d_ctx)
+
+    def gap_forward():
+        _dl, _c, _ = _forward(pair.draft, ctx[:, :gap], d_cache, d_ctx)
+        d_cache.crop(d_ctx)
+
+    def verify(n):
+        def f():
+            _l, _c, _ = _forward(pair.target, ctx[:, :n], t_cache, t_ctx)
+            t_cache.crop(t_ctx)
+        return f
+
+    gap_ms = median_ms(gap_forward)
+    verify_ms = {L: median_ms(verify(L + 1)) for L in ACTIONS}
+    verify0_ms = median_ms(verify(1))
+    draft = {m: {L: median_ms(lambda L=L, m=m: draft_loop(L, m))
+                 for L in ACTIONS} for m in ("A", "B", "C", "D")}
+
+    # per-token draft cost per config (for the report)
+    per_tok = {m: {L: draft[m][L] / L for L in ACTIONS} for m in draft}
+
+    # --- rebuild oracle cost profile from config C (deployment) -----------
+    def costs_from(mode):
+        c = {0: verify0_ms * 1e6}
+        for L in ACTIONS:
+            c[L] = (verify_ms[L] + gap_ms + draft[mode][L]) * 1e6
+        return c
+
+    matches = _match_vectors(
+        _read_parquet(f"/artifacts/traces/{run_id}/fixed_8/rounds.parquet"))
+    headroom = {}
+    for mode in ("A", "C", "D"):
+        c = costs_from(mode)
+        r = oracle_policy_value(matches, c, actions=tuple(sorted(c)))
+        headroom[mode] = {"best_fixed_L": r["best_fixed"][0],
+                          "headroom_pct": round(r["headroom"] * 100, 2),
+                          "fixed_tpc": {int(k): r["fixed"][k] for k in r["fixed"]}}
+
+    print(f"\nctx_len={ctx.shape[1]}  gap_catchup={gap_ms:.2f}ms  "
+          f"verify(skip,1pos)={verify0_ms:.2f}ms")
+    print(f"{'L':>3} | {'verify':>7} | " + " | ".join(f"{m}ms/tok" for m in "ABCD"))
+    for L in ACTIONS:
+        print(f"{L:>3} | {verify_ms[L]:>7.2f} | " +
+              " | ".join(f"{per_tok[m][L]:>6.2f}" for m in "ABCD"))
+    print("\n=== REAL M3 HEADROOM (sealed fixed_8 labels, measured costs) ===")
+    for mode in ("A", "C", "D"):
+        h = headroom[mode]
+        gate = "PROCEED" if h["headroom_pct"] >= 5 else "STOP"
+        print(f"  [{mode}] best_fixed L={h['best_fixed_L']:>2}  "
+              f"headroom={h['headroom_pct']:>6.2f}%  -> {gate}")
+
+    out = {"gap_ms": gap_ms, "verify0_ms": verify0_ms, "verify_ms": verify_ms,
+           "draft_ms": draft, "per_tok_ms": per_tok, "headroom": headroom,
+           "context_len": ctx.shape[1], "n_iter": n_iter}
+    path = f"/artifacts/analysis/{run_id}/t3_4_bench.json"
+    with open(path, "w") as f:
+        json.dump(out, f, indent=2, sort_keys=True)
+    artifacts.commit()
+    print(f"\nwrote {path}")
+    return headroom
+
+
+@app.local_entrypoint()
+def bench(run_id: str = "sweep-2026-07-11T203836"):
+    bench_draft.remote(run_id)
