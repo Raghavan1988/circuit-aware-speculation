@@ -55,5 +55,6 @@ data/prompts.jsonl
 data/split_manifest.json
 .pytest_cache/
 *.egg-info/
-# local, non-authoritative planning view (not committed)
+# local, non-authoritative planning views (not committed)
 WORK_THEMES.local.md
+CORPUS_PLAN.local.md

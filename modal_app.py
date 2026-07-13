@@ -121,6 +121,57 @@ def ingest_data() -> dict:
     return {"n_prompts": len(rows), "summary": summary}
 
 
+@app.function(image=image, volumes=VOLUMES, timeout=2 * 3600, secrets=[hf_secret])
+def ingest_v2() -> dict:
+    """Build the exhaustive Core v2 corpus (CORPUS_PLAN / D022) into
+    /artifacts/data_v2/ — the sealed v1 corpus at /artifacts/data/ is untouched.
+    Per-loader isolation: a broken source is reported, not fatal."""
+    import json
+    import os
+    from collections import Counter
+
+    from cas.data.ingest import CORPUS_LICENSES, ingest_core_v2
+    from cas.data.splits import PromptRecord, split_by_prompt, split_summary
+
+    rows, status = ingest_core_v2()
+    recs = [PromptRecord(r["prompt_id"], r["dataset"], r["domain"], r["prompt_hash"])
+            for r in rows]
+    assignment = split_by_prompt(recs, dev_fraction=0.5, seed=0)  # keyed by prompt_hash
+    summary = split_summary(assignment, recs)
+
+    os.makedirs("/artifacts/data_v2", exist_ok=True)
+    with open("/artifacts/data_v2/prompts.jsonl", "w") as f:
+        for r in rows:
+            f.write(json.dumps(r) + "\n")
+    with open("/artifacts/data_v2/split_manifest.json", "w") as f:
+        json.dump({"seed": 0, "dev_fraction": 0.5,
+                   "assignment": assignment, "summary": summary}, f, indent=2)
+    lines = ["# Corpus v2 — dataset licenses / provenance (D022)", ""]
+    for ds, meta in CORPUS_LICENSES.items():
+        lines.append(f"- {ds}: SPDX={meta['spdx']}; "
+                     f"redistributable={meta['redistributable']}; axis={meta['axis']}")
+    lines += ["", "Reference completions are generated in-house with the study's "
+              "Qwen2.5-7B/0.5B pair (Apache-2.0), sidestepping output-license terms.",
+              "Copyright-text datasets (cnn_dailymail, xsum) must ship row_id only."]
+    with open("/artifacts/data_v2/LICENSES.md", "w") as f:
+        f.write("\n".join(lines))
+    artifacts.commit()
+
+    dom = dict(Counter(r["domain"] for r in rows))
+    by_ds = dict(Counter(r["dataset"] for r in rows))
+    print("=== per-loader status ==="); print(json.dumps(status, indent=2))
+    print("=== domain counts ==="); print(dom)
+    print("=== dataset counts ==="); print(by_ds)
+    print("=== split summary ==="); print(json.dumps(summary, indent=2))
+    return {"n_prompts": len(rows), "by_domain": dom, "by_dataset": by_ds,
+            "status": status}
+
+
+@app.local_entrypoint()
+def ingestv2():
+    ingest_v2.remote()
+
+
 @app.function(image=image, gpu=GPU, volumes=VOLUMES, timeout=3600)
 def smoke_decode(prompt: str = "def fibonacci(n):", max_new_tokens: int = 64) -> dict:
     """End-to-end smoke: load the pair, run fixed-length speculative decode, and
@@ -632,7 +683,7 @@ DRAFT_POOL = (
 
 @app.function(image=image, gpu=GPU, volumes=VOLUMES, timeout=6 * 3600)
 def draft_matrix(max_new: int = 128, cap_per_domain: int = 0,
-                 drafts: str = DRAFT_POOL) -> dict:
+                 drafts: str = DRAFT_POOL, corpus: str = "data") -> dict:
     """Exhaustive RQ3 study: draft x domain acceptance matrix vs one Qwen2.5-7B
     target. Generates the target greedy continuation ONCE per prompt, scores each
     candidate draft's per-token argmax agreement (drift-free acceptance) on the
@@ -651,7 +702,7 @@ def draft_matrix(max_new: int = 128, cap_per_domain: int = 0,
     ttok = AutoTokenizer.from_pretrained(T_ID, revision=T_REV)
     tv = ttok.get_vocab()
 
-    with open("/artifacts/data/prompts.jsonl") as f:
+    with open(f"/artifacts/{corpus}/prompts.jsonl") as f:
         rows = [json.loads(l) for l in f]
     if cap_per_domain:
         seen: dict = {}
@@ -748,13 +799,14 @@ def draft_matrix(max_new: int = 128, cap_per_domain: int = 0,
         oracle[d] = {"best_draft": best.split('/')[-1] if best else None,
                      "best_acc": matrix[best][d] if best else None}
 
-    res = {"max_new": max_new, "n_prompts": len(conts), "domains": domains,
-           "tokenizer_compat": compat, "matrix": matrix,
+    res = {"corpus": corpus, "max_new": max_new, "n_prompts": len(conts),
+           "domains": domains, "tokenizer_compat": compat, "matrix": matrix,
            "size_matched_comparisons": comps, "oracle_router": oracle}
 
     # ---- print ----
     short = lambda s: s.split('/')[-1].replace('Qwen2.5-', '')
-    print("\n=== RQ3 DRAFT x DOMAIN ACCEPTANCE MATRIX (drift-free, vs 7B target) ===")
+    print(f"\n=== RQ3 DRAFT x DOMAIN ACCEPTANCE MATRIX (corpus={corpus}, "
+          f"drift-free, vs 7B target) ===")
     hdr = f"{'draft':<26}" + "".join(f"{d:>9}" for d in domains)
     print(hdr)
     for did in per:
@@ -773,15 +825,16 @@ def draft_matrix(max_new: int = 128, cap_per_domain: int = 0,
     for d in domains:
         print(f"  {d}: {oracle[d]['best_draft']} @ {oracle[d]['best_acc']:.3f}")
 
-    with open("/artifacts/analysis/rq3_draft_matrix.json", "w") as f:
+    suffix = "" if corpus == "data" else f"_{corpus}"  # keep the v1 artifact stable
+    with open(f"/artifacts/analysis/rq3_draft_matrix{suffix}.json", "w") as f:
         json.dump(res, f, indent=2)
     artifacts.commit()
     return res
 
 
 @app.local_entrypoint()
-def draftmatrix(max_new: int = 128, cap_per_domain: int = 0):
-    draft_matrix.remote(max_new, cap_per_domain)
+def draftmatrix(max_new: int = 128, cap_per_domain: int = 0, corpus: str = "data"):
+    draft_matrix.remote(max_new, cap_per_domain, corpus=corpus)
 
 
 @app.function(image=image, gpu=GPU, volumes=VOLUMES, timeout=3600)
