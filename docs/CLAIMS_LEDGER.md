@@ -176,6 +176,79 @@ Held-out **test** (19,074 rounds), serving-cost basis (draft forward = 0.1 x ver
   wall-clock number; evidence toward C05/C06 scoped to the serving-cost model.
 - Logged by Claude, 2026-07-12.
 
+### 2026-07-12 — RQ3 draft-routing feasibility: code specialist ties the general draft (no-go, well-powered)
+
+Apples-to-apples acceptance probe (`modal_app.py::probe_draft`): the Qwen2.5-7B-
+Instruct target's greedy continuation is generated once per prompt, then each
+candidate draft's per-token argmax agreement (drift-free acceptance) is scored on
+the identical continuation. `Qwen2.5-Coder-0.5B-Instruct` shares the target
+tokenizer exactly (151,665 vocab, base-ids aligned) — exact spec decoding is
+possible. Artifacts: `analysis/rq3_draft_probe_code.json`.
+
+Code, all **164** HumanEval prompts (18,471 tokens/draft, prompt-grouped):
+
+| draft | code acceptance |
+|---|---|
+| general Qwen2.5-0.5B-Instruct | 0.8746 |
+| code Qwen2.5-Coder-0.5B-Instruct | 0.8745 |
+
+Paired diff (Coder − general) = **−0.0024, 95% CI [−0.0077, +0.0035]** (bootstrap
+over 164 prompts). **CI includes 0 → statistically indistinguishable.**
+
+- **Finding:** an off-the-shelf code specialist does **not** beat the general
+  instruct draft on code against a general instruct target. Mechanism: acceptance
+  tracks how well the draft matches the *target's* distribution, and the general
+  0.5B-Instruct is already family-matched to the 7B-Instruct target; domain
+  expertise in the draft does not add. This is a well-powered no-go (the 40-prompt
+  pilot showed the same direction, underpowered).
+- **Consequence for RQ1/RQ3:** with a single general target, the draft-routing
+  axis has no headroom here, so the joint controller (RQ1) collapses to the length
+  controller (RQ2) on this pair. Empirically supports deferring draft routing
+  (D003/D009). The higher-value specialists would be target-distilled EAGLE heads
+  (deferred C11), not off-the-shelf domain models. Math arm + full draft×domain
+  matrix in progress (`rq3_draft_matrix.json`).
+- **Metric note:** drift-free teacher-forced acceptance (0.87) is a block-length-1
+  upper bound; the sweep's 0.523 code number is over 8-token blocks where the
+  draft drifts. The general-vs-specialist comparison is apples-to-apples on the
+  identical metric, so the tie is valid.
+- Logged by Claude, 2026-07-12.
+
+### 2026-07-12 — RQ3 exhaustive draft x domain matrix: specialization does not help, size does (definitive no-go)
+
+Full draft x domain acceptance matrix (`modal_app.py::draft_matrix`, 644 prompts,
+drift-free per-token acceptance vs the shared Qwen2.5-7B-Instruct greedy
+continuation; drafts loaded one at a time). All five drafts share the target
+tokenizer (aligned). Artifact: `analysis/rq3_draft_matrix.json`.
+
+| draft | chat | code | math | summ |
+|---|---|---|---|---|
+| general 0.5B | 0.738 | 0.898 | 0.910 | 0.672 |
+| Coder 0.5B | 0.675 | 0.899 | 0.877 | 0.603 |
+| **general 1.5B** | **0.789** | **0.917** | **0.928** | **0.736** |
+| Math 1.5B | 0.662 | 0.862 | 0.919 | 0.554 |
+| Coder 1.5B | 0.753 | 0.917 | 0.917 | 0.695 |
+
+Size-matched paired diffs (prompt-grouped bootstrap 95% CI):
+- Coder-0.5B − general-0.5B @ code: −0.0033, CI [−0.0087, +0.0018], n=164 → **tie**
+- Coder-1.5B − general-1.5B @ code: −0.0037, CI [−0.0091, +0.0008], n=164 → **tie**
+- Math-1.5B − general-1.5B @ math: −0.0088, CI [−0.0128, −0.0050], n=200 → **SIGNIFICANT (specialist WORSE on its own domain)**
+
+- **Findings:** (1) code specialists **tie** the size-matched general draft on
+  code (both sizes); (2) the math specialist is **significantly worse than the
+  size-matched general even on math**, and much worse off-domain (drifted from the
+  target's distribution); (3) **draft SIZE dominates specialization** — general-1.5B
+  is the best-or-tied draft in every domain and beats general-0.5B everywhere; (4)
+  the **oracle router ≈ general-1.5B in all four domains**, so routing among
+  off-the-shelf specialists yields ~zero benefit over the general draft of the
+  right size.
+- **Verdict:** RQ3 (draft routing) is a **well-powered no-go across all domains** on
+  this pair; RQ1 (joint) collapses to RQ2 (length). For exact-match spec decoding
+  with a general instruct target, acceptance is governed by draft-vs-target
+  distribution match and draft capacity, not draft domain expertise. Empirically
+  validates deferring draft routing (D003/D009); the only promising specialist
+  direction is target-distilled EAGLE heads (deferred C11), not domain models.
+- Logged by Claude, 2026-07-12.
+
 ## Evidence record template
 
 When updating a claim, append:
