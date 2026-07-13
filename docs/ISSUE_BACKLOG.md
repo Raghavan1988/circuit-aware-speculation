@@ -15,9 +15,9 @@ Statuses are `OPEN`, `IN_PROGRESS`, `BLOCKED`, and `DONE`. Before starting, add 
 | I07 | IN_PROGRESS | Claude | Run target-only, skip, and fixed-length sweep | I03,I04,I06 | — | A100/H100 |
 | I08 | DONE | Codex | Implement entropy and recent-acceptance policies | I03,I06 | I09 | Small GPU |
 | I09 | DONE | Codex | Reproduce a BanditSpec-style baseline | I03,I06 | I08 | GPU |
-| I10 | OPEN | — | Add selected-layer activation capture | I03,I06 | I11 | A100/H100 |
+| I10 | DONE | Claude | Add selected-layer activation capture | I03,I06 | I11 | A100/H100 |
 | I11 | DONE | Grok | Build and validate token-category annotation | I05,I06 | I10 | CPU |
-| I12 | OPEN | — | Train leakage-safe layerwise acceptance probes | I10,I11 | — | GPU/CPU |
+| I12 | DONE | Claude | Train leakage-safe layerwise acceptance probes | I10,I11 | — | GPU/CPU |
 | I13 | OPEN | — | Evaluate calibration and incremental information | I07,I08,I09,I12 | — | CPU |
 | I14 | OPEN | — | Implement compute-optimal selective speculation | I07,I13 | — | GPU |
 | I15 | OPEN | — | Run rejection-direction interventions and controls | I12 | I14 | A100/H100 |

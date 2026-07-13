@@ -53,6 +53,10 @@ hf_cache = modal.Volume.from_name("cas-hf-cache", create_if_missing=True)
 artifacts = modal.Volume.from_name("cas-artifacts", create_if_missing=True)
 VOLUMES = {"/root/.cache/huggingface": hf_cache, "/artifacts": artifacts}
 
+# HF token for gated weights (the Llama I17 replication pair). Ungated Qwen does
+# not need it; attaching is harmless when CAS_PAIR=qwen.
+hf_secret = modal.Secret.from_name("huggingface-token")
+
 # GPU tier for model-loading functions. H100 is the canonical runs (needs a
 # payment method on file); override with e.g. `CAS_GPU=A10G modal run ...` to run
 # the correctness gate on a cheaper 24GB card that credits cover without a card.
@@ -61,18 +65,26 @@ VOLUMES = {"/root/.cache/huggingface": hf_cache, "/artifacts": artifacts}
 GPU = os.environ.get("CAS_GPU", "H100")
 
 
-@app.function(image=image, gpu=GPU, volumes=VOLUMES, timeout=3600)
-def verify_env() -> dict:
+@app.function(image=image, gpu=GPU, volumes=VOLUMES, timeout=3600,
+              secrets=[hf_secret])
+def verify_env(pair: str = "qwen") -> dict:
+    import os
     import sys
 
+    os.environ["CAS_PAIR"] = pair  # selects the pair before config is imported
     sys.path.insert(0, "/root")
     from scripts.verify_env import collect, resolve_revisions, tiny_forward_check
 
-    report = {"env": collect(), "revisions": resolve_revisions()}
+    report = {"pair": pair, "env": collect(), "revisions": resolve_revisions()}
     report["forward_check"] = tiny_forward_check()
     hf_cache.commit()
     print(report)
     return report
+
+
+@app.local_entrypoint()
+def verify(pair: str = "qwen"):
+    verify_env.remote(pair)
 
 
 @app.function(image=image, volumes=VOLUMES, timeout=7200)  # CPU-only: no GPU needed
@@ -371,8 +383,9 @@ def sweep(run_id: str = "", cap: int = 0, max_new_tokens: int = 256,
         print(run_sweep.remote(run_id, git, ts, max_new_tokens, cap))
 
 
-@app.function(image=image, gpu=GPU, volumes=VOLUMES, timeout=3600)
-def run_tests(dtype: str = "bfloat16") -> int:
+@app.function(image=image, gpu=GPU, volumes=VOLUMES, timeout=3600,
+              secrets=[hf_secret])
+def run_tests(dtype: str = "bfloat16", pair: str = "qwen") -> int:
     """Run the full test suite (pure + GPU equivalence) on the GPU.
 
     `dtype` is passed as a Modal function arg (NOT a local env var, which does
@@ -385,15 +398,22 @@ def run_tests(dtype: str = "bfloat16") -> int:
     import subprocess
 
     os.environ["CAS_DTYPE"] = dtype  # inherited by the child pytest process
+    os.environ["CAS_PAIR"] = pair    # selects Qwen (default) or the Llama pair
 
-    # Verify the override actually reaches the config the tests will load.
+    # Verify the overrides actually reach the config the tests will load.
     from cas.config import EngineConfig
 
-    resolved = EngineConfig().target.dtype
-    print(f"run_tests: requested dtype={dtype!r} -> EngineConfig.target.dtype={resolved!r}")
-    assert resolved == dtype, "CAS_DTYPE did not propagate to EngineConfig"
+    cfg = EngineConfig()
+    print(f"run_tests: dtype={dtype!r} pair={pair!r} -> "
+          f"target={cfg.target.model_id} @ {cfg.target.dtype}")
+    assert cfg.target.dtype == dtype, "CAS_DTYPE did not propagate to EngineConfig"
 
     return subprocess.call(["python", "-m", "pytest", "-q", "/root/tests"])
+
+
+@app.local_entrypoint()
+def tests(dtype: str = "bfloat16", pair: str = "qwen"):
+    print("exit", run_tests.remote(dtype, pair))
 
 
 @app.function(image=image, volumes=VOLUMES, timeout=2 * 3600)  # CPU-only
@@ -445,10 +465,32 @@ def sens(run_id: str = "sweep-2026-07-11T203836"):
     sensitivity.remote(run_id)
 
 
+@app.function(image=image, volumes=VOLUMES, timeout=1800)  # CPU-only
+def eval_policies(run_id: str = "sweep-2026-07-11T203836", eval_split: str = "dev",
+                  ratio: float = 0.1) -> dict:
+    """RQ2: adaptive length-policy evaluation over the sealed traces (fixed vs
+    entropy-stop vs history vs oracle; latency-independent efficiency)."""
+    from scripts.eval_length_policies import _print, run as run_eval
+
+    res = run_eval(f"/artifacts/traces/{run_id}", eval_split, ratio)
+    _print(res)
+    with open(f"/artifacts/analysis/{run_id}/rq2_length_policies_{eval_split}.json", "w") as f:
+        import json as _json
+        _json.dump(res, f, indent=2)
+    artifacts.commit()
+    return res
+
+
+@app.local_entrypoint()
+def evalp(run_id: str = "sweep-2026-07-11T203836", eval_split: str = "dev",
+          ratio: float = 0.1):
+    eval_policies.remote(run_id, eval_split, ratio)
+
+
 @app.function(image=image, gpu=GPU, volumes=VOLUMES, timeout=3600)
 def bench_draft(run_id: str = "sweep-2026-07-11T203836", context_len: int = 128,
                 n_warmup: int = 5, n_iter: int = 25, gap: int = 5,
-                attn: str = "eager") -> dict:
+                attn: str = "eager", compile_mode: str = "") -> dict:
     """T3.4: clean draft/verify latency, all actions in ONE container (removes
     the cross-container jitter confound C2), decomposed into fixed (gap catch-up)
     and per-token cost, under four configs:
@@ -483,15 +525,18 @@ def bench_draft(run_id: str = "sweep-2026-07-11T203836", context_len: int = 128,
     # T3.4-b: override attention impl for the timing fork (does NOT touch the
     # eager capture path; this is a benchmark-only config). "sdpa"/"flash_
     # attention_2" fuse attention kernels -> fewer launches -> tests launch-bound.
-    if attn != "eager":
+    cmode = compile_mode or None  # "" -> None (eager, no compile)
+    if attn != "eager" or cmode:
         cfg = dataclasses.replace(
             cfg,
-            target=dataclasses.replace(cfg.target, attn_implementation=attn),
-            draft=dataclasses.replace(cfg.draft, attn_implementation=attn),
+            target=dataclasses.replace(
+                cfg.target, attn_implementation=attn, compile_mode=cmode),
+            draft=dataclasses.replace(
+                cfg.draft, attn_implementation=attn, compile_mode=cmode),
         )
     pair = load_pair(cfg)
     dev = pair.device
-    print(f"attn_implementation={attn}  "
+    print(f"attn_implementation={attn}  compile_mode={cmode}  "
           f"draft.attn={cfg.draft.attn_implementation}")
 
     with open("/artifacts/data/prompts.jsonl") as f:
@@ -592,10 +637,12 @@ def bench_draft(run_id: str = "sweep-2026-07-11T203836", context_len: int = 128,
         print(f"  [{mode}] best_fixed L={h['best_fixed_L']:>2}  "
               f"headroom={h['headroom_pct']:>6.2f}%  -> {gate}")
 
-    out = {"attn": attn, "gap_ms": gap_ms, "verify0_ms": verify0_ms,
-           "verify_ms": verify_ms, "draft_ms": draft, "per_tok_ms": per_tok,
-           "headroom": headroom, "context_len": ctx.shape[1], "n_iter": n_iter}
-    path = f"/artifacts/analysis/{run_id}/t3_4_bench_{attn}.json"
+    out = {"attn": attn, "compile_mode": cmode, "gap_ms": gap_ms,
+           "verify0_ms": verify0_ms, "verify_ms": verify_ms, "draft_ms": draft,
+           "per_tok_ms": per_tok, "headroom": headroom,
+           "context_len": ctx.shape[1], "n_iter": n_iter}
+    tag = f"{attn}" + (f"_{cmode.replace('-', '')}" if cmode else "")
+    path = f"/artifacts/analysis/{run_id}/t3_4_bench_{tag}.json"
     with open(path, "w") as f:
         json.dump(out, f, indent=2, sort_keys=True)
     artifacts.commit()
@@ -604,5 +651,157 @@ def bench_draft(run_id: str = "sweep-2026-07-11T203836", context_len: int = 128,
 
 
 @app.local_entrypoint()
-def bench(run_id: str = "sweep-2026-07-11T203836", attn: str = "eager"):
-    bench_draft.remote(run_id, attn=attn)
+def bench(run_id: str = "sweep-2026-07-11T203836", attn: str = "eager",
+          compile_mode: str = ""):
+    bench_draft.remote(run_id, attn=attn, compile_mode=compile_mode)
+
+
+@app.function(image=image, gpu=GPU, volumes=VOLUMES, timeout=6 * 3600)
+def capture_activations(run_id: str = "sweep-2026-07-11T203836",
+                        cap_prompts: int = 120, split: str = "dev") -> dict:
+    """I10: teacher-forced draft residual-stream capture at early/mid/late/final
+    layers, aligned to the sealed fixed_8 proposals, reusing the frozen
+    acceptance labels. Writes acts_L*.npy + metadata.parquet to the volume.
+
+    Eager attention (D014/D015) keeps this the hookable path; we read the
+    residual stream via output_hidden_states (numerically the real model).
+    """
+    import json
+    import os
+
+    import numpy as np
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    import torch
+
+    from cas.annotate.phases import annotate_phase
+    from cas.capture import DEFAULT_LAYERS, generating_positions
+    from cas.config import EngineConfig
+    from cas.models import load_pair
+
+    torch.set_grad_enabled(False)
+    cfg = EngineConfig()
+    pair = load_pair(cfg)
+    draft, tok, dev = pair.draft, pair.tokenizer, pair.device
+
+    base = f"/artifacts/traces/{run_id}"
+    rounds = pq.read_table(f"{base}/fixed_8/rounds.parquet").to_pylist()
+    summ = pq.read_table(f"{base}/fixed_8/request_summaries.parquet").to_pylist()
+    with open("/artifacts/data/split_manifest.json") as f:
+        assignment = json.load(f)["assignment"]          # prompt_hash -> split
+    split_of = {s["request_id"]: assignment.get(s["prompt_hash"], "unknown")
+                for s in summ}
+    domain_of = {s["request_id"]: s["domain"] for s in summ}
+    with open("/artifacts/data/prompts.jsonl") as f:
+        prompt_text = {json.loads(l)["prompt_id"]: json.loads(l)["prompt_text"]
+                       for l in (ln for ln in f)}
+
+    by_req: dict = {}
+    for r in rounds:
+        by_req.setdefault(r["request_id"], []).append(r)
+    reqs = [rid for rid in by_req
+            if split_of.get(rid) == split and rid in prompt_text]
+    reqs.sort()
+    reqs = reqs[:cap_prompts]
+
+    acts = {L: [] for L in DEFAULT_LAYERS}
+    meta = []
+    n_aligned = n_tok = 0
+    for j, rid in enumerate(reqs):
+        prompt_ids = tok(prompt_text[rid])["input_ids"]
+        # The engine commits one prefill token (target greedy argmax after the
+        # prompt) BEFORE round 0, so generated[0] is that token and round 0 has
+        # start_output_pos == 1. Recompute it (deterministic prefill argmax, same
+        # op as the sweep) so the committed prefix matches the sealed run exactly.
+        t_ids = torch.tensor([prompt_ids], device=dev)
+        first_tok = int(pair.target(input_ids=t_ids, use_cache=False).logits[0, -1].argmax())
+        prefix_ids = list(prompt_ids) + [first_tok]  # grows by each round's emissions
+        for r in sorted(by_req[rid], key=lambda x: x["round_id"]):
+            if r["start_output_pos"] != len(prefix_ids) - len(prompt_ids):
+                raise ValueError(f"{rid} r{r['round_id']} emit/pos mismatch "
+                                 f"({r['start_output_pos']} vs {len(prefix_ids) - len(prompt_ids)})")
+            proposals = list(r["proposed_token_ids"] or ())
+            targ = list(r["target_argmax_ids"] or ())
+            emitted = list(r["emitted_token_ids"] or ())
+            if not proposals:
+                prefix_ids += emitted
+                continue
+            ids = torch.tensor([prefix_ids + proposals], device=dev)
+            out = draft(input_ids=ids, output_hidden_states=True, use_cache=False)
+            hs, logits = out.hidden_states, out.logits
+            positions = generating_positions(len(prefix_ids), len(proposals))
+            for i, pos in enumerate(positions):
+                pred = int(logits[0, pos].argmax())
+                aligned = int(pred == proposals[i])
+                n_aligned += aligned
+                n_tok += 1
+                label = int(i < len(targ) and proposals[i] == targ[i])
+                for L in DEFAULT_LAYERS:
+                    acts[L].append(hs[L][0, pos].to(torch.float16).cpu().numpy())
+                meta.append({"request_id": rid, "round_id": r["round_id"],
+                             "offset": i, "token_position": r["start_output_pos"] + i,
+                             "label": label, "aligned": aligned,
+                             "split": split_of.get(rid, "unknown"),
+                             "domain": domain_of.get(rid, "unknown"),
+                             "phase": annotate_phase(r["start_output_pos"] + i)})
+            prefix_ids += emitted  # advance committed prefix for the next round
+        if (j + 1) % 20 == 0:
+            print(f"{j+1}/{len(reqs)} prompts, {n_tok} tokens, "
+                  f"align={n_aligned/max(n_tok,1):.4f}", flush=True)
+
+    outdir = f"/artifacts/probes/{run_id}"
+    os.makedirs(outdir, exist_ok=True)
+    for L in DEFAULT_LAYERS:
+        np.save(f"{outdir}/acts_L{L}.npy", np.stack(acts[L]))
+    pq.write_table(pa.Table.from_pylist(meta), f"{outdir}/metadata.parquet")
+    with open(f"{outdir}/capture_meta.json", "w") as f:
+        json.dump({"run_id": run_id, "split": split, "n_prompts": len(reqs),
+                   "n_tokens": n_tok, "layers": list(DEFAULT_LAYERS),
+                   "align_rate": n_aligned / max(n_tok, 1),
+                   "d_model": int(acts[DEFAULT_LAYERS[0]][0].shape[0])}, f, indent=2)
+    artifacts.commit()
+    print(f"captured {n_tok} tokens x {len(DEFAULT_LAYERS)} layers; "
+          f"align_rate={n_aligned/max(n_tok,1):.4f}; wrote {outdir}")
+    return {"n_tokens": n_tok, "align_rate": n_aligned / max(n_tok, 1),
+            "n_prompts": len(reqs)}
+
+
+@app.local_entrypoint()
+def capture(run_id: str = "sweep-2026-07-11T203836", cap_prompts: int = 120):
+    capture_activations.remote(run_id, cap_prompts=cap_prompts)
+
+
+@app.function(image=image, volumes=VOLUMES, timeout=2 * 3600)  # CPU-only
+def fit_probes(run_id: str = "sweep-2026-07-11T203836",
+               layers: str = "6,12,18,24", eval_split: str = "dev") -> dict:
+    """I12/C01: layerwise hidden probes + hidden⊕surface incremental-info test
+    vs the ~0.84 surface baseline, on the captured activations."""
+    from scripts.fit_probes import run as run_probes
+
+    probe_dir = f"/artifacts/probes/{run_id}"
+    run_dir = f"/artifacts/traces/{run_id}"
+    ls = [int(x) for x in layers.split(",")]
+    res = run_probes(probe_dir, run_dir, ls, eval_split)
+
+    s = res["surface_only"]["auroc"]
+    print(f"rows={res['n_rows']} pos_rate={res['pos_rate']:.3f} split={eval_split}")
+    print(f"SURFACE baseline AUROC = {s:.4f}  (bar to beat)")
+    print(f"{'layer':>6} {'hidden':>8} {'hid+surf':>9} {'Δ vs surf':>11}")
+    for L, d in res["layers"].items():
+        h, c = d["hidden_only"]["auroc"], d["hidden_plus_surface"]["auroc"]
+        print(f"{L:>6} {h:>8.4f} {c:>9.4f} {c - s:>+11.4f}")
+    import json as _json
+    with open(f"{probe_dir}/probe_results.json", "w") as f:
+        _json.dump(res, f, indent=2)
+    artifacts.commit()
+    best = max(res["layers"].items(), key=lambda kv: kv[1]["hidden_only"]["auroc"])
+    verdict = best[1]["hidden_only"]["auroc"] > s
+    print(f"best hidden layer {best[0]} @ {best[1]['hidden_only']['auroc']:.4f} -> "
+          f"{'BEATS' if verdict else 'does NOT beat'} surface {s:.4f}")
+    return {"surface": s, "best_hidden_layer": best[0],
+            "best_hidden_auroc": best[1]["hidden_only"]["auroc"], "beats": verdict}
+
+
+@app.local_entrypoint()
+def probe(run_id: str = "sweep-2026-07-11T203836", layers: str = "6,12,18,24"):
+    fit_probes.remote(run_id, layers=layers)

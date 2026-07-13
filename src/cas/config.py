@@ -35,25 +35,49 @@ class ModelSpec:
     revision: str | None = None  # pin to a commit SHA before results runs
     dtype: str = "bfloat16"
     attn_implementation: str = "eager"  # D014: eager for hookability + determinism
+    # D021: measurement-only fast path. None = eager execution (default; the
+    # hookable capture path for T4/I10). A torch.compile mode string (e.g.
+    # "reduce-overhead", "default") wraps the model to cut launch-bound overhead
+    # for TIMING only; equivalence must be re-verified before any compiled path
+    # produces a scientific result.
+    compile_mode: str | None = None
+
+
+def _pair() -> str:
+    """Model pair selector, overridable via CAS_PAIR. Default 'qwen' (primary,
+    ungated). 'llama' is the I17 replication pair (gated; needs an HF token)."""
+    return os.environ.get("CAS_PAIR", "qwen").lower()
+
+
+# (target_spec, draft_spec) per pair. Llama revisions are pinned after the first
+# resolved download (verify_env prints them); None until then, with a warning.
+def _pair_specs():
+    dt = _default_dtype()
+    if _pair() == "llama":
+        # Revisions resolved + pinned after the first verify_env download (D014);
+        # None until then (loud warning). CAS_LLAMA_TARGET_REV / _DRAFT_REV allow
+        # pinning the resolved SHA without editing code between resolve and lock.
+        return (
+            ModelSpec("meta-llama/Llama-3.1-8B-Instruct",
+                      revision=os.environ.get("CAS_LLAMA_TARGET_REV") or None,
+                      dtype=dt),
+            ModelSpec("meta-llama/Llama-3.2-1B-Instruct",
+                      revision=os.environ.get("CAS_LLAMA_DRAFT_REV") or None,
+                      dtype=dt),
+        )
+    return (
+        ModelSpec("Qwen/Qwen2.5-7B-Instruct",
+                  revision="a09a35458c702b33eeacc393d103063234e8bc28", dtype=dt),
+        ModelSpec("Qwen/Qwen2.5-0.5B-Instruct",
+                  revision="7ae557604adf67be50417f59c2c2f167def9a775", dtype=dt),
+    )
 
 
 @dataclass(frozen=True)
 class EngineConfig:
-    # Primary pair (ungated). Replication pair (Llama) is handled separately (I17).
-    target: ModelSpec = field(
-        default_factory=lambda: ModelSpec(
-            "Qwen/Qwen2.5-7B-Instruct",
-            revision="a09a35458c702b33eeacc393d103063234e8bc28",
-            dtype=_default_dtype(),
-        )
-    )
-    draft: ModelSpec = field(
-        default_factory=lambda: ModelSpec(
-            "Qwen/Qwen2.5-0.5B-Instruct",
-            revision="7ae557604adf67be50417f59c2c2f167def9a775",
-            dtype=_default_dtype(),
-        )
-    )
+    # Pair chosen by CAS_PAIR (D013 primary = Qwen; I17 replication = Llama).
+    target: ModelSpec = field(default_factory=lambda: _pair_specs()[0])
+    draft: ModelSpec = field(default_factory=lambda: _pair_specs()[1])
     max_new_tokens: int = 256  # D013 default; confirm/revise at first full sweep
     action_lengths: tuple[int, ...] = ACTION_LENGTHS
     seed: int = 0

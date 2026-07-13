@@ -6,12 +6,12 @@ No claim may move to `SUPPORTED` without experiment identifiers, applicable sett
 
 | ID | Proposed claim | Status | Required evidence | Experiment IDs | Counterexamples / limits |
 |---|---|---|---|---|---|
-| C01 | Draft hidden states contain acceptance information beyond entropy, margin, history, and domain. | UNTESTED | Prompt-grouped incremental comparison on held-out prompts | — | — |
+| C01 | Draft hidden states contain acceptance information beyond entropy, margin, history, and domain. | PARTIAL (negative-leaning) | Prompt-grouped incremental comparison on held-out prompts | I10/I12 dev probe, run sweep-2026-07-11T203836 (2026-07-12) | **Not supported for a LINEAR probe on the Qwen pair:** hidden-only AUROC peaks 0.803 (layer 18) vs surface 0.870; hidden⊕surface adds ≤ +0.006 AUROC (layers 18/24 only, not shown significant). Cheap surface signals are a strong, hard-to-beat baseline. Scope: linear probe, 4 layers, 120 dev prompts, 42k tokens. Nonlinear probes / other layers / the Llama pair (I17) untested. See Run log 2026-07-12 |
 | C02 | Acceptance information becomes accessible at identifiable draft-model layers. | UNTESTED | Layerwise probes replicated across domains and a second model setting | — | — |
 | C03 | Rejection-associated directions have a controlled effect on draft–target divergence or acceptance. | UNTESTED | Dose-response intervention with random and norm-matched controls | — | — |
 | C04 | Acceptance behavior differs systematically across token categories and generation phases. | UNTESTED | Acceptance atlas with paired uncertainty and annotation validation | — | Domain-level acceptance differences are prior (arXiv:2604.14682, I21 verified 2026-07-10); that work does **not** cover overlapping token-category labels or a fine-grained phase atlas — position as domain control/context. Annotation tooling landed I11 (`cas.annotate` v1.0.0); atlas evidence still pending I07+I18 |
 | C05 | Selective speculation with a skip action reduces wasted compute relative to adaptive-length baselines. | UNTESTED | Held-out comparison including all overhead | — | — |
-| C06 | The circuit-aware controller improves net latency over the best global fixed policy. | UNTESTED | Paired held-out wall-clock study with uncertainty | — | — |
+| C06 | The circuit-aware controller improves net latency over the best global fixed policy. | UNTESTED | Paired held-out wall-clock study with uncertainty | — | **Harness-dependent (2026-07-12, T3.4):** the routing headroom this claim needs is ~5% on the eager launch-bound harness (best fixed action = skip) and only reaches ~25–46% under a serving-grade fused+graph-captured draft. Any net-latency claim must state the execution mode. See Run log 2026-07-12 |
 | C07 | Any controller advantage persists against the best per-domain fixed policy. | UNTESTED | Per-domain held-out comparison | — | — |
 | C08 | The signal or controller transfers under domain and traffic shift without full retuning. | UNTESTED | Shift study with calibration drift and latency regret | — | — |
 | C09 | The principal finding replicates outside the primary Qwen pair. | UNTESTED | Compatible Llama pair or approved Qwen-ratio fallback | — | — |
@@ -105,6 +105,76 @@ No claim may move to `SUPPORTED` without experiment identifiers, applicable sett
 - Living table: `docs/landscape.md` (authoritative). PLAN.md edits proposed
   as notes only.
 - Logged by Grok, 2026-07-11.
+
+### 2026-07-12 — I10/I12 acceptance probe: cheap surface signals beat a linear hidden-state probe (C01 negative)
+
+Teacher-forced draft residual-stream capture (I10) at layers 6/12/18/24 over 120
+dev prompts of run `sweep-2026-07-11T203836` (42,568 tokens; token-to-activation
+**align_rate 0.9916** vs the sealed proposals — the ~0.8% miss is bf16 cache-vs-
+no-cache flips, dropped). Regularized logistic probes, prompt-grouped GroupKFold,
+standardized hidden features (I12). Artifacts: `/artifacts/probes/…/acts_L*.npy`,
+`metadata.parquet`, `probe_results.json`.
+
+| feature set | AUROC |
+|---|---|
+| surface stack (entropy, margin, history, offset, pos) — the bar | **0.870** |
+| hidden-only layer 6 / 12 / 18 / 24 | 0.734 / 0.769 / **0.803** / 0.789 |
+| hidden⊕surface layer 6 / 12 / 18 / 24 | 0.864 / 0.868 / **0.876** / 0.873 |
+
+- **Finding:** a linear probe on draft hidden states does **not** beat the cheap
+  surface baseline (best hidden 0.803 ≪ surface 0.870), and adds at most **+0.006
+  AUROC** when combined (late layers only; significance not established). For this
+  pair, the free signals (entropy/margin/history) already capture the linearly-
+  accessible acceptance information. Contextualizes DSpark (2607.05147): a linear
+  acceptance head is matched here by signals that cost nothing to compute.
+- **Layer trend (C02 direction, weak):** linear accessibility rises with depth
+  (0.734 → 0.803, peak layer 18) then dips at the final layer — consistent with
+  mid/late emergence, but never enough to beat surface.
+- **Boundaries:** linear probe only (nonlinear untested); 4 layers; single pair;
+  dev split. Does not touch C04 (atlas, latency- and probe-independent).
+- Logged by Claude, 2026-07-12.
+
+### 2026-07-12 — I17 Llama replication: draft-repo access still gated (blocked)
+
+`CAS_PAIR=llama modal run …::verify` with the `huggingface-token` secret
+attached. **401 on `meta-llama/Llama-3.2-1B-Instruct`** (the draft) —
+"Access to model … is restricted." The error is specific to the 1B draft, so
+either that repo's gated access is not yet granted on the token's account
+(separate from Llama-3.1-8B) or the secret's token lacks it. No SHAs resolved;
+config Llama revisions remain None (unpinned). Pair-switch wiring (CAS_PAIR,
+HF secret on GPU fns) is in place and ready once access is granted.
+- Logged by Claude, 2026-07-12.
+
+### 2026-07-12 — RQ2 adaptive length: entropy-stop beats best fixed length on efficiency (positive, generalizes)
+
+Offline replay of length policies over the sealed `fixed_8` counterfactual labels
+(`scripts/eval_length_policies.py`; every round carries per-position draft entropy
+and match, so any length policy is evaluable exactly without re-running a model).
+Latency-independent metrics; threshold tuned on dev, **evaluated held-out on test**
+with the frozen value. Artifacts: `analysis/…/rq2_length_policies_{dev,test}.json`.
+
+Held-out **test** (19,074 rounds), serving-cost basis (draft forward = 0.1 x verify):
+
+| policy | yield (emit/round) | wasted/emit | eff (serving) |
+|---|---|---|---|
+| best fixed = fixed_8 | 4.324 | 1.081 | 2.402 |
+| **entropy-stop (tau=2.0, dev-frozen)** | 3.854 | **0.408** | **2.672 (+11.2%)** |
+| history-EMA | 3.324 | 0.434 | 2.415 (+0.5%) |
+| oracle (per-round best) | 4.324 | 0.017 | 3.228 |
+
+- **Finding:** the SVIP-style entropy-stop controller beats the best fixed length
+  by **+11.2%** serving-efficiency on held-out test (dev +11.3% — transfers), and
+  cuts **wasted draft tokens by ~62%** (0.408 vs 1.081 per emitted token) while
+  keeping ~89% of the yield. It captures ~33% of the oracle headroom over best
+  fixed. History-EMA alone barely helps (+0.5%): entropy is the effective content
+  signal for length. This is the roadmap RQ2 / Phase-1 result.
+- **Scope / honest caveat:** this is under a **serving-realistic draft cost** (the
+  small draft is genuinely cheap). Under the current **launch-bound** harness
+  (eff_launch column, all forwards equal cost) skip still dominates, consistent
+  with the M3 stop finding. So the Phase-1 win is real in the deployment regime
+  but contingent on the deferred StaticCache fast-draft path. Not a measured
+  wall-clock number; evidence toward C05/C06 scoped to the serving-cost model.
+- Logged by Claude, 2026-07-12.
 
 ## Evidence record template
 
@@ -231,3 +301,71 @@ immutable run logs, never hand-estimated.
   status changes to C05–C08 are warranted; I14 and held-out performance remain
   untested.
 - Logged by Codex, 2026-07-11.
+
+### 2026-07-12 — M3 oracle headroom + draft launch-bound characterization (negative/measurement)
+
+Full sweep `sweep-2026-07-11T203836` (bf16, max_new=256, 644 prompts, all 8
+policies sealed). Analysis reports on the `cas-artifacts` volume:
+`analysis/…/t3_report.json`, `t3_4_bench_eager.json`, `t3_4_bench_sdpa.json`.
+Every number below is script-generated from the sealed traces / bench, not
+hand-entered.
+
+- **M3 oracle headroom = STOP on this harness.** Counterfactual per-round
+  best-action vs best fixed action (D018.3), costs measured per policy:
+  headroom **compute-basis 1.68% / full-basis 2.66%**, best fixed action =
+  **skip (L=0)** — below the D018 ~5% tripwire. On the eager harness, adaptive
+  draft-length routing barely beats "don't speculate."
+- **Root cause is a launch-bound draft forward, not acceptance.** T3.4
+  micro-benchmark (single A100, median of 25): the 0.5B draft costs **≈24
+  ms/token** and this is **invariant across configs** A (per-token
+  entropy+margin+argmax with host syncs), B (signals off), C (signals batched,
+  no per-token sync), D (pure floor) — so the earlier "instrumentation/sync
+  overhead" hypothesis is **REFUTED**. Draft (0.5B, 24 layers) ≈ target verify
+  (7B, 28 layers, ~30 ms): cost tracks **layer count, not parameters**. Draft
+  forward over 1 vs 5 tokens is ~24 vs ~25 ms → dominated by **fixed
+  per-forward kernel-launch overhead**. HBM floor for 0.5B ≈ 0.5 ms (1 GB ÷ ~2
+  TB/s) vs 24 ms measured ⇒ **launch-bound, not memory-bound.**
+- **SDPA does not fix it (T3.4b).** Fused-attention draft still **≈25 ms/token**
+  → the overhead is whole-forward kernel dispatch (projections, MLP, norms,
+  RoPE, residuals), not the attention kernels. The fix requires CUDA-graph /
+  compiled capture, not an attention-backend flag.
+- **The STOP is harness-specific, not fundamental.** CPU cost-sensitivity on the
+  same sealed match vectors: at a hypothetical draft cost of 8 / 4 / 2 ms/token
+  the headroom is **46% / 38% / 26%** and best fixed action moves to L=2/6/8. So
+  the routing opportunity is real; it is masked by launch-bound eager execution.
+  Consistent with D014 (eager is capture-friendly, not production-absolute).
+- **Impact on claims:** C06 (and C05) net-latency advantage is **harness-
+  dependent** — limit added to the C06 row. C04 (acceptance atlas) is
+  **latency-independent and unaffected**: 38 category×phase cells, prompt-
+  bootstrap CIs, `code_delimiter`/`operator`/`number` ≈0.85–0.88 vs
+  `named_entity`/`reasoning_transition` ≈0.58–0.67 (label = counterfactual
+  `target_match`). Surface baseline ladder (I13): `surface_stack` AUROC 0.84,
+  pre-draft `preround_hardened` 0.73 — the bar any hidden-state probe (C01) must
+  beat. These stand regardless of the timing result.
+- **Data-quality note (recoverable, no re-run):** sealed
+  `RequestSummary.split` is all `"unknown"` — the sweep stamped
+  `assignment.get(prompt_id)` but the split map is keyed by `prompt_hash`
+  (modal_app.py:276). Recovered at analysis time via prompt_hash + split
+  manifest. Atlas/baselines/oracle unaffected. Fix the stamping and re-stamp
+  before publishing the dataset (T6.1).
+- Follow-up: measurement-only dual-mode harness authorized (D021) to characterize
+  the deployed-regime headroom and unblock an honest M3 re-decision.
+- **Dual-mode (D021) measured — no drop-in flag fixes the launch-bound draft:**
+  `t3_4_bench_sdpa_default.json` and the reduce-overhead attempt.
+  (a) `torch.compile(mode="reduce-overhead")` (CUDA graphs) **errors at runtime** —
+  "accessing tensor output of CUDAGraphs that has been overwritten by a subsequent
+  run" (in `apply_rotary_pos_emb` / `get_seq_length`): CUDA-graph static output
+  buffers are incompatible with HF `DynamicCache`, whose KV tensors persist and
+  grow across steps. (b) `torch.compile(mode="default")` (inductor fusion, no CUDA
+  graphs): draft **≈31 ms/token — no improvement over eager (~24 ms), actually
+  worse**, and the run trips `torch._dynamo` `cache_size_limit` (8) because the
+  variable per-step sequence length forces constant recompilation; the resulting
+  cost profile is polluted (skip verify 38.7 ms vs L=1 verify 16.8 ms — internally
+  inconsistent), so its 13–16% "headroom" is a recompilation artifact, not a real
+  gain. **Conclusion:** on the current dynamic-cache engine, neither fused
+  attention nor either compile mode circumvents launch-bound. The real fix is a
+  fixed-shape **`StaticCache`** decode path — which simultaneously enables stable
+  compilation (one shape) and CUDA-graph replay — i.e. serving-grade plumbing,
+  deferred to Tier-2/G4 (D009/D010). The dual-mode seam itself works and is in
+  place; it just has nothing to compile *to* until a static-cache path exists.
+- Logged by Claude, 2026-07-12.

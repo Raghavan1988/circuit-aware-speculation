@@ -43,6 +43,12 @@ def _load_one(spec: ModelSpec, device: torch.device):
     ).to(device)
     model.eval()
     resolved = getattr(getattr(model, "config", None), "_commit_hash", None)
+    # D021: optional measurement-only fast path. Capture provenance BEFORE
+    # compiling (the wrapped module proxies attrs, but read the raw config to be
+    # safe). torch.compile is applied last; the default (compile_mode=None) is
+    # the unchanged eager, hookable model used for activation capture.
+    if getattr(spec, "compile_mode", None):
+        model = torch.compile(model, mode=spec.compile_mode)
     return model, (resolved or "unresolved")
 
 
