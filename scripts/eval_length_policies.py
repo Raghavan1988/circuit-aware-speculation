@@ -142,7 +142,9 @@ def evaluate(rounds, policy, cost_serving, alpha=0.3):
     wasted = drafted - accepted
     return {"yield": emit / n, "wasted_per_emit": wasted / emit,
             "eff_launch": emit / fw_launch, "eff_serving": emit / fw_serving,
-            "n_rounds": n}
+            "n_rounds": n, "emit": emit, "drafted": drafted, "accepted": accepted,
+            "fw_serving": fw_serving,
+            "accept_rate": (accepted / drafted) if drafted else 0.0}
 
 
 def _tune_tau(rounds, cost_serving):
@@ -214,15 +216,79 @@ def _print(res):
           f"entropy-stop: {P[ctrl]['wasted_per_emit']:.3f}/emit")
 
 
+def _domain_of(run_dir):
+    summ = _read(os.path.join(run_dir, "fixed_8", "request_summaries.parquet"))
+    return {s["request_id"]: s["domain"] for s in summ}
+
+
+def routing_opportunity(run_dir, draft_ratio=0.1):
+    """Scopes RQ3 (does routing help?) WITHOUT a draft pool, from the single
+    draft's per-domain behavior:
+      (a) per-domain acceptance rate — where the general draft is weak, a
+          specialized draft would help most (the draft-routing ceiling proxy);
+      (b) per-domain optimal length — if it differs, routing the LENGTH by domain
+          already beats one global length (content-awareness premise), and the
+          gain is a lower bound on content-aware routing value.
+    """
+    by_req = _rounds_by_request(run_dir)
+    dom = _domain_of(run_dir)
+    cost_serving = make_cost_serving(draft_ratio)
+    domains: dict = {}
+    for rid, rs in by_req.items():
+        domains.setdefault(dom.get(rid, "unknown"), []).append(rs)
+
+    per = {}
+    for d, rounds in domains.items():
+        res = {L: evaluate(rounds, fixed_policy(L), cost_serving) for L in ACTIONS}
+        bestL = max(ACTIONS, key=lambda L: res[L]["eff_serving"])
+        est = evaluate(rounds, entropy_stop_policy(2.0), cost_serving)
+        per[d] = {"n_rounds": res[8]["n_rounds"], "accept_rate": res[8]["accept_rate"],
+                  "best_L": bestL, "eff_best_fixed": res[bestL]["eff_serving"],
+                  "eff_entropy_stop": est["eff_serving"],
+                  "_emit_bestL": res[bestL]["emit"], "_fw_bestL": res[bestL]["fw_serving"]}
+    all_rounds = [rs for rss in domains.values() for rs in rss]
+    g = {L: evaluate(all_rounds, fixed_policy(L), cost_serving) for L in ACTIONS}
+    gL = max(ACTIONS, key=lambda L: g[L]["eff_serving"])
+    global_eff = g[gL]["eff_serving"]
+    routed_eff = (sum(per[d]["_emit_bestL"] for d in per)
+                  / sum(per[d]["_fw_bestL"] for d in per))
+    return {"draft_ratio": draft_ratio, "global_best_L": gL, "global_eff": global_eff,
+            "domain_routed_length_eff": routed_eff,
+            "length_routing_gain_pct": (routed_eff / global_eff - 1) * 100,
+            "per_domain": {d: {k: v for k, v in per[d].items() if not k.startswith("_")}
+                           for d in per}}
+
+
+def _print_routing(r):
+    print(f"\nRQ3 routing-OPPORTUNITY scoping (serving draft_ratio={r['draft_ratio']})")
+    print(f"{'domain':<16}{'rounds':>8}{'accept_rate':>12}{'best_L':>8}"
+          f"{'eff_fixed':>11}{'eff_estop':>11}")
+    for d, m in sorted(r["per_domain"].items(), key=lambda kv: kv[1]["accept_rate"]):
+        print(f"{d:<16}{m['n_rounds']:>8}{m['accept_rate']:>12.3f}{m['best_L']:>8}"
+              f"{m['eff_best_fixed']:>11.4f}{m['eff_entropy_stop']:>11.4f}")
+    print(f"\nglobal best fixed length = L{r['global_best_L']} @ {r['global_eff']:.4f}")
+    print(f"route length by domain (own best L) @ {r['domain_routed_length_eff']:.4f}  "
+          f"({r['length_routing_gain_pct']:+.1f}% over one global length)")
+    ars = [m["accept_rate"] for m in r["per_domain"].values()]
+    bls = {m["best_L"] for m in r["per_domain"].values()}
+    print(f"acceptance spread across domains: {min(ars):.3f}..{max(ars):.3f}  "
+          f"(gap {max(ars)-min(ars):.3f}); per-domain optimal length set = {sorted(bls)}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", required=True)
     ap.add_argument("--eval", default="dev")
     ap.add_argument("--ratio", type=float, default=0.1)
+    ap.add_argument("--routing", action="store_true", help="RQ3 opportunity scoping")
     ap.add_argument("--out", default="")
     a = ap.parse_args()
-    res = run(a.run, a.eval, a.ratio)
-    _print(res)
+    if a.routing:
+        res = routing_opportunity(a.run, a.ratio)
+        _print_routing(res)
+    else:
+        res = run(a.run, a.eval, a.ratio)
+        _print(res)
     if a.out:
         with open(a.out, "w") as f:
             json.dump(res, f, indent=2)

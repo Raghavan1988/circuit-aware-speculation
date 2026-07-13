@@ -487,6 +487,303 @@ def evalp(run_id: str = "sweep-2026-07-11T203836", eval_split: str = "dev",
     eval_policies.remote(run_id, eval_split, ratio)
 
 
+@app.function(image=image, volumes=VOLUMES, timeout=1800)  # CPU-only
+def routing_opp(run_id: str = "sweep-2026-07-11T203836", ratio: float = 0.1) -> dict:
+    """RQ3 routing-opportunity scoping (per-domain acceptance + optimal length)."""
+    from scripts.eval_length_policies import _print_routing, routing_opportunity
+
+    res = routing_opportunity(f"/artifacts/traces/{run_id}", ratio)
+    _print_routing(res)
+    with open(f"/artifacts/analysis/{run_id}/rq3_routing_opportunity.json", "w") as f:
+        import json as _json
+        _json.dump(res, f, indent=2)
+    artifacts.commit()
+    return res
+
+
+@app.local_entrypoint()
+def routingopp(run_id: str = "sweep-2026-07-11T203836", ratio: float = 0.1):
+    routing_opp.remote(run_id, ratio)
+
+
+@app.function(image=image, gpu=GPU, volumes=VOLUMES, timeout=3600)
+def probe_draft(domain: str = "code", cap_prompts: int = 40, max_new: int = 128,
+                drafts: str = "Qwen/Qwen2.5-0.5B-Instruct,Qwen/Qwen2.5-Coder-0.5B-Instruct"
+                ) -> dict:
+    """RQ3 go/no-go: does a domain-specialized draft accept better than the
+    general draft on its home domain? Apples-to-apples: generate the SAME target
+    greedy continuation per prompt, then score each candidate draft's per-token
+    argmax agreement (the acceptance condition) on it. Feasibility probe: drafts
+    unpinned; tokenizer base-id alignment is verified (required for exact spec).
+    """
+    import json
+
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    torch.set_grad_enabled(False)
+    T_ID = "Qwen/Qwen2.5-7B-Instruct"
+    T_REV = "a09a35458c702b33eeacc393d103063234e8bc28"
+    ttok = AutoTokenizer.from_pretrained(T_ID, revision=T_REV)
+    target = AutoModelForCausalLM.from_pretrained(
+        T_ID, revision=T_REV, torch_dtype=torch.bfloat16,
+        attn_implementation="eager").to("cuda").eval()
+    tv = ttok.get_vocab()
+
+    draft_ids = [d.strip() for d in drafts.split(",")]
+    models, compat = {}, {}
+    for did in draft_ids:
+        try:
+            dtok = AutoTokenizer.from_pretrained(did)
+            dv = dtok.get_vocab()
+            shared = set(tv) & set(dv)
+            aligned = all(tv[s] == dv[s] for s in shared)
+            compat[did] = {"target_vocab": len(tv), "draft_vocab": len(dv),
+                           "shared": len(shared), "base_ids_aligned": bool(aligned),
+                           "extra_in_draft": len(dv) - len(shared)}
+            models[did] = AutoModelForCausalLM.from_pretrained(
+                did, torch_dtype=torch.bfloat16,
+                attn_implementation="eager").to("cuda").eval()
+        except Exception as e:  # keep going; one bad id must not kill the probe
+            compat[did] = {"error": repr(e)[:200]}
+            print(f"skip {did}: {e!r}", flush=True)
+
+    with open("/artifacts/data/prompts.jsonl") as f:
+        rows = [json.loads(l) for l in f]
+    prompts = [r for r in rows if r["domain"] == domain][:cap_prompts]
+
+    import random
+
+    stats = {d: {"match": 0, "total": 0} for d in models}
+    per_prompt = {d: [] for d in models}   # per-prompt (match, total) for grouping
+    for i, r in enumerate(prompts):
+        ids = ttok(r["prompt_text"])["input_ids"]
+        t = torch.tensor([ids], device="cuda")
+        gen = target.generate(t, max_new_tokens=max_new, do_sample=False,
+                              pad_token_id=ttok.eos_token_id)
+        cont = gen[0, len(ids):].tolist()
+        if not cont:
+            continue
+        full = torch.tensor([ids + cont], device="cuda")
+        base = len(ids) - 1
+        for did, m in models.items():
+            logits = m(input_ids=full, use_cache=False).logits
+            mp = sum(int(int(logits[0, base + j].argmax()) == tok_id)
+                     for j, tok_id in enumerate(cont))
+            stats[did]["match"] += mp
+            stats[did]["total"] += len(cont)
+            per_prompt[did].append((mp, len(cont)))
+        if (i + 1) % 20 == 0:
+            print(f"{i+1}/{len(prompts)} prompts", flush=True)
+
+    acceptance = {d: (stats[d]["match"] / stats[d]["total"] if stats[d]["total"] else None)
+                  for d in models}
+
+    # Prompt-grouped paired comparison: the honest unit is the prompt, not the
+    # token. Report per-prompt paired difference (specialist - general) with a
+    # prompt-level bootstrap 95% CI. If the CI includes 0, 40-ish prompts cannot
+    # distinguish the drafts (no clear winner).
+    paired = None
+    if len(models) == 2:
+        a, b = list(models)  # a=general (first), b=specialist (second)
+        diffs = [pb / tb - pa / ta
+                 for (pa, ta), (pb, tb) in zip(per_prompt[a], per_prompt[b])
+                 if ta and tb]
+        rng = random.Random(0)
+        boots = []
+        for _ in range(2000):
+            s = [diffs[rng.randrange(len(diffs))] for _ in diffs]
+            boots.append(sum(s) / len(s))
+        boots.sort()
+        paired = {"specialist_minus_general": b + " - " + a,
+                  "n_prompts_paired": len(diffs),
+                  "mean_diff": sum(diffs) / len(diffs),
+                  "ci95": [boots[49], boots[1949]],
+                  "median_tokens_per_prompt": sorted(t for _, t in per_prompt[a])[len(per_prompt[a]) // 2]}
+
+    res = {"domain": domain, "n_prompts": len(prompts), "max_new": max_new,
+           "tokens_scored_per_draft": {d: stats[d]["total"] for d in models},
+           "tokenizer_compat": compat, "acceptance": acceptance,
+           "paired_prompt_grouped": paired,
+           "sweep_general_code_block8_acceptance": 0.523}
+    print(json.dumps(res, indent=2))
+    with open(f"/artifacts/analysis/rq3_draft_probe_{domain}.json", "w") as f:
+        json.dump(res, f, indent=2)
+    artifacts.commit()
+    return res
+
+
+@app.local_entrypoint()
+def draftprobe(domain: str = "code", cap_prompts: int = 40,
+               drafts: str = "Qwen/Qwen2.5-0.5B-Instruct,Qwen/Qwen2.5-Coder-0.5B-Instruct"):
+    probe_draft.remote(domain, cap_prompts, drafts=drafts)
+
+
+# The RQ3 draft pool: general + specialists, with SIZE-MATCHED controls (Math has
+# no 0.5B, so general-1.5B is included to isolate specialization from raw size).
+DRAFT_POOL = (
+    "Qwen/Qwen2.5-0.5B-Instruct,"        # general, 0.5B
+    "Qwen/Qwen2.5-Coder-0.5B-Instruct,"  # code, 0.5B
+    "Qwen/Qwen2.5-1.5B-Instruct,"        # general, 1.5B (size control)
+    "Qwen/Qwen2.5-Math-1.5B-Instruct,"   # math, 1.5B
+    "Qwen/Qwen2.5-Coder-1.5B-Instruct"   # code, 1.5B (size-matched code)
+)
+
+
+@app.function(image=image, gpu=GPU, volumes=VOLUMES, timeout=6 * 3600)
+def draft_matrix(max_new: int = 128, cap_per_domain: int = 0,
+                 drafts: str = DRAFT_POOL) -> dict:
+    """Exhaustive RQ3 study: draft x domain acceptance matrix vs one Qwen2.5-7B
+    target. Generates the target greedy continuation ONCE per prompt, scores each
+    candidate draft's per-token argmax agreement (drift-free acceptance) on the
+    identical continuation, loading drafts one at a time (memory-safe). Reports
+    the matrix plus size-matched specialist-vs-general paired diffs with
+    prompt-grouped bootstrap CIs, and the oracle-router ceiling per domain.
+    """
+    import json
+    import random
+
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    torch.set_grad_enabled(False)
+    T_ID, T_REV = "Qwen/Qwen2.5-7B-Instruct", "a09a35458c702b33eeacc393d103063234e8bc28"
+    ttok = AutoTokenizer.from_pretrained(T_ID, revision=T_REV)
+    tv = ttok.get_vocab()
+
+    with open("/artifacts/data/prompts.jsonl") as f:
+        rows = [json.loads(l) for l in f]
+    if cap_per_domain:
+        seen: dict = {}
+        capped = []
+        for r in rows:
+            d = r["domain"]
+            if seen.get(d, 0) < cap_per_domain:
+                capped.append(r); seen[d] = seen.get(d, 0) + 1
+        rows = capped
+
+    # 1) target greedy continuation once per prompt (sdpa for speed; argmax
+    #    acceptance is robust to attn backend, and all drafts see the same conts)
+    target = AutoModelForCausalLM.from_pretrained(
+        T_ID, revision=T_REV, torch_dtype=torch.bfloat16,
+        attn_implementation="sdpa").to("cuda").eval()
+    conts = []  # (domain, ids, cont)
+    for i, r in enumerate(rows):
+        ids = ttok(r["prompt_text"])["input_ids"]
+        gen = target.generate(torch.tensor([ids], device="cuda"),
+                              max_new_tokens=max_new, do_sample=False,
+                              pad_token_id=ttok.eos_token_id)
+        conts.append((r["domain"], ids, gen[0, len(ids):].tolist()))
+        if (i + 1) % 100 == 0:
+            print(f"target gen {i+1}/{len(rows)}", flush=True)
+    del target
+    torch.cuda.empty_cache()
+
+    domains = sorted({d for d, _, _ in conts})
+    draft_ids = [d.strip() for d in drafts.split(",")]
+    # per[draft][domain] = list of (match, total) per prompt (prompt-grouped)
+    per: dict = {}
+    compat: dict = {}
+    for did in draft_ids:
+        try:
+            dv = AutoTokenizer.from_pretrained(did).get_vocab()
+            aligned = all(tv[s] == dv[s] for s in (set(tv) & set(dv)))
+            compat[did] = {"vocab": len(dv), "aligned": bool(aligned)}
+            if not aligned:
+                print(f"{did}: tokenizer NOT aligned -> skip (exact spec impossible)")
+                continue
+            m = AutoModelForCausalLM.from_pretrained(
+                did, torch_dtype=torch.bfloat16,
+                attn_implementation="sdpa").to("cuda").eval()
+        except Exception as e:
+            compat[did] = {"error": repr(e)[:200]}
+            print(f"skip {did}: {e!r}", flush=True)
+            continue
+        per[did] = {d: [] for d in domains}
+        for dom, ids, cont in conts:
+            if not cont:
+                continue
+            full = torch.tensor([ids + cont], device="cuda")
+            base = len(ids) - 1
+            logits = m(input_ids=full, use_cache=False).logits
+            mp = sum(int(int(logits[0, base + j].argmax()) == t)
+                     for j, t in enumerate(cont))
+            per[did][dom].append((mp, len(cont)))
+        del m
+        torch.cuda.empty_cache()
+        print(f"scored draft {did}", flush=True)
+
+    def acc(did, dom):
+        rows_ = per[did][dom]
+        tot = sum(t for _, t in rows_)
+        return (sum(mm for mm, _ in rows_) / tot) if tot else None
+
+    def paired_ci(spec, gen, dom):
+        a, b = per[spec][dom], per[gen][dom]
+        diffs = [ps / ts - pg / tg for (ps, ts), (pg, tg) in zip(a, b) if ts and tg]
+        if not diffs:
+            return None
+        rng = random.Random(0)
+        boots = sorted(sum((diffs[rng.randrange(len(diffs))] for _ in diffs)) / len(diffs)
+                       for _ in range(2000))
+        return {"n_prompts": len(diffs), "mean_diff": sum(diffs) / len(diffs),
+                "ci95": [boots[49], boots[1949]]}
+
+    matrix = {did: {d: acc(did, d) for d in domains} for did in per}
+    # size-matched specialist vs general comparisons (spec, general, domain)
+    comps = {}
+    for spec, gen, dom in [
+        ("Qwen/Qwen2.5-Coder-0.5B-Instruct", "Qwen/Qwen2.5-0.5B-Instruct", "code"),
+        ("Qwen/Qwen2.5-Coder-1.5B-Instruct", "Qwen/Qwen2.5-1.5B-Instruct", "code"),
+        ("Qwen/Qwen2.5-Math-1.5B-Instruct", "Qwen/Qwen2.5-1.5B-Instruct", "math"),
+    ]:
+        if spec in per and gen in per and dom in domains:
+            comps[f"{spec.split('/')[-1]} vs {gen.split('/')[-1]} @ {dom}"] = \
+                paired_ci(spec, gen, dom)
+    # oracle router: best draft per domain vs the general-0.5B incumbent
+    oracle = {}
+    for d in domains:
+        best = max((did for did in per if matrix[did][d] is not None),
+                   key=lambda did: matrix[did][d], default=None)
+        oracle[d] = {"best_draft": best.split('/')[-1] if best else None,
+                     "best_acc": matrix[best][d] if best else None}
+
+    res = {"max_new": max_new, "n_prompts": len(conts), "domains": domains,
+           "tokenizer_compat": compat, "matrix": matrix,
+           "size_matched_comparisons": comps, "oracle_router": oracle}
+
+    # ---- print ----
+    short = lambda s: s.split('/')[-1].replace('Qwen2.5-', '')
+    print("\n=== RQ3 DRAFT x DOMAIN ACCEPTANCE MATRIX (drift-free, vs 7B target) ===")
+    hdr = f"{'draft':<26}" + "".join(f"{d:>9}" for d in domains)
+    print(hdr)
+    for did in per:
+        print(f"{short(did):<26}" + "".join(
+            f"{matrix[did][d]:>9.3f}" if matrix[did][d] is not None else f"{'-':>9}"
+            for d in domains))
+    print(f"{'ORACLE ROUTER':<26}" + "".join(
+        f"{oracle[d]['best_acc']:>9.3f}" for d in domains))
+    print("\n=== SIZE-MATCHED specialist vs general (paired, prompt-grouped 95% CI) ===")
+    for k, v in comps.items():
+        if v:
+            sig = "SIGNIFICANT" if (v['ci95'][0] > 0 or v['ci95'][1] < 0) else "n.s. (tie)"
+            print(f"  {k}: diff={v['mean_diff']:+.4f} "
+                  f"CI[{v['ci95'][0]:+.4f},{v['ci95'][1]:+.4f}] n={v['n_prompts']} -> {sig}")
+    print("\n=== ORACLE ROUTER best draft per domain ===")
+    for d in domains:
+        print(f"  {d}: {oracle[d]['best_draft']} @ {oracle[d]['best_acc']:.3f}")
+
+    with open("/artifacts/analysis/rq3_draft_matrix.json", "w") as f:
+        json.dump(res, f, indent=2)
+    artifacts.commit()
+    return res
+
+
+@app.local_entrypoint()
+def draftmatrix(max_new: int = 128, cap_per_domain: int = 0):
+    draft_matrix.remote(max_new, cap_per_domain)
+
+
 @app.function(image=image, gpu=GPU, volumes=VOLUMES, timeout=3600)
 def bench_draft(run_id: str = "sweep-2026-07-11T203836", context_len: int = 128,
                 n_warmup: int = 5, n_iter: int = 25, gap: int = 5,
