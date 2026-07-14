@@ -35,7 +35,9 @@ We replayed length policies over the sealed traces, tuned the entropy threshold 
 | Entropy-stop controller | 3.85 | 0.41 | 2.67 (+11.2 percent) |
 | Oracle (per-round best) | 4.32 | 0.02 | 3.23 |
 
-The controller beats the best fixed length by 11.2 percent (11.3 on dev, so it transfers without retuning), cuts wasted draft tokens by about 62 percent while keeping about 89 percent of the yield, and captures about one third of the oracle headroom. It also wins within every individual domain. Recent-acceptance history alone adds only 0.5 percent: the draft's own entropy is the signal that matters.
+The controller beats the best fixed length by 11.2 percent, with a prompt-grouped bootstrap 95 percent confidence interval of +10.3 to +12.1 percent over 322 held-out prompts (the probability of zero or negative gain is below 1 in 2000). It cuts wasted draft tokens by about 62 percent while keeping about 89 percent of the yield (the wasted-token confidence intervals of the two policies do not overlap), captures about one third of the oracle headroom, transfers from dev to test without retuning (11.3 to 11.2), and wins within every individual domain.
+
+We also completed the controller comparison the roadmap asked for: online bandit controllers (epsilon-greedy and UCB over lengths) converge to the best fixed length (efficiency 2.40) and cannot beat it, which is expected since a context-free bandit learns the best single arm, and the best single arm is the fixed baseline. Only the contextual rule that reads the draft's per-step entropy beats it. Recent-acceptance history alone adds 0.5 percent. Conclusion: the gain comes from per-round context, not from online arm selection. An error analysis shows the signal is well calibrated (acceptance falls monotonically from 0.97 to 0.16 across entropy bins) and that the remaining headroom is domain-skewed: the controller over-drafts on math and under-drafts on summarization and chat. A coarse four-length menu retains about 98 percent of the value, which simplifies deployment.
 
 ### 3.2 Specialized drafts do not beat a generalist (new, answers RQ3)
 
@@ -108,7 +110,8 @@ Second model family (Llama 3.1 8B target with 3.2 1B draft): wiring is complete 
 | Atlas cells / acceptance range | 38 / 0.52 to 0.88 |
 | Cheap-signal predictor AUROC | about 0.84 (full dev); 0.870 (probe subset) |
 | Best hidden-state probe AUROC | 0.803 (layer 18); combined adds at most +0.006 |
-| Adaptive length vs best fixed (held-out) | +11.2 percent efficiency; wasted tokens 0.41 vs 1.08 per emitted |
+| Adaptive length vs best fixed (held-out) | +11.2 percent efficiency, 95 percent CI +10.3 to +12.1; wasted tokens 0.41 vs 1.08 per emitted |
+| Bandit controllers (epsilon-greedy, UCB) | converge to best fixed (2.40); do not beat the contextual rule (2.67) |
 | Oracle headroom captured by the controller | about 33 percent |
 | Specialist vs generalist drafts | ties on code; significantly worse on math (its own domain) |
 | Draft cost on this harness | about 24 ms per token (launch-bound); verify about 30 ms |

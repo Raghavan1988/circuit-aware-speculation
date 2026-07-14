@@ -249,6 +249,60 @@ Size-matched paired diffs (prompt-grouped bootstrap 95% CI):
   direction is target-distilled EAGLE heads (deferred C11), not domain models.
 - Logged by Claude, 2026-07-12.
 
+### 2026-07-13 — T5.3 controller comparison + T5.4 error taxonomy (roadmap A2/A4)
+
+Same replay protocol as the RQ2 entry (sealed fixed_8 labels, serving-cost basis
+draft=0.1×verify, held-out test, 19,074 rounds; stream order = sorted request_id).
+Artifacts: `analysis/…/rq2_length_policies_test.json`, `t5_4_taxonomy_test.json`.
+
+**T5.3 — online bandits converge to best-fixed; the contextual rule wins:**
+
+| controller | eff (serving) | wasted/emit |
+|---|---|---|
+| best fixed (L=8) | 2.4022 | 1.081 |
+| UCB1 over lengths | 2.4015 | 1.075 |
+| epsilon-greedy (mean of 3 seeds) | 2.3661 | ~1.05 |
+| entropy-stop (tau=2.0, dev-frozen) | **2.6715** | **0.408** |
+
+- Stationary context-free bandits (UCBSpec/epsilon-greedy style) learn the best
+  single arm and therefore **tie the best fixed length by construction** — they
+  cannot exceed it. The +11.2% win comes from **per-round context** (draft
+  entropy), not from online arm selection. Controller ranking: entropy-stop >
+  UCB ≈ eps-greedy ≈ best fixed > history-EMA.
+- Caveat: the replay stream is domain-sorted, so per-quartile efficiency trends
+  reflect domain composition, not regret; a windowed non-stationary bandit could
+  at most recover the domain-level gain (~+4.4%, see routing-opportunity note),
+  still well below the contextual +11.2%.
+
+**T5.4 — error taxonomy for the frozen entropy controller (test):**
+
+| domain | over-draft rounds | over tok/round | under-draft rounds | under tok/round |
+|---|---|---|---|---|
+| math | 48.0% | 2.44 | 4.6% | 0.15 |
+| code | 33.9% | 1.53 | 13.8% | 0.46 |
+| chat | 34.1% | 1.26 | 20.2% | 0.55 |
+| summ | 34.1% | 1.22 | 23.7% | 0.63 |
+
+- Failure modes are domain-skewed: on math the controller mostly **over-drafts**
+  (confident but wrong continuations); on summarization/chat it mostly
+  **under-drafts** (entropy over-fires and stops runs that would have matched).
+  Headroom to the oracle (2.67 → 3.23) lives in exactly these cells.
+- **Entropy calibration is cleanly monotone** (P(accept) 0.969 at H≤0.25 down to
+  0.164 at H>6, n=152k positions) — the signal the threshold rule relies on is
+  well-behaved; no miscalibration pathology.
+- **Candidate-set ablation (A4):** a coarse {0,1,4,8} menu retains ~97-98% of the
+  value (oracle 3.135 vs 3.228; entropy-stop 2.622 vs 2.668) — a 4-arm menu is
+  nearly free of loss, which simplifies deployment.
+- Batch interference: not measurable (batch-1 harness) — stated, not omitted.
+- Also fixed this date: the sweep split-stamp bug (`assignment.get(prompt_id)` →
+  `prompt_hash`, modal_app run_policy) so future sweeps stamp splits correctly.
+- **RQ2 headline uncertainty (added same date):** prompt-grouped bootstrap
+  (2,000 resamples over 322 held-out test prompts, `rq2_ci_test.json`):
+  entropy-stop vs best fixed relative efficiency delta **+11.2%, 95% CI
+  [+10.3%, +12.1%]**, P(delta<=0) = 0/2000. Wasted-per-emitted CIs disjoint:
+  stop 0.408 [0.388, 0.430] vs fixed 1.081 [1.008, 1.157].
+- Logged by Claude, 2026-07-13.
+
 ## Evidence record template
 
 When updating a claim, append:
