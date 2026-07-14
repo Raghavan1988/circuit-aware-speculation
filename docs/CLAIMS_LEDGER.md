@@ -595,3 +595,34 @@ Llama's absolute efficiency is higher (3.17 vs 2.67 tok/round-cost).
   zero-shot across model families.
 - Logged by Claude, 2026-07-13. Artifacts: volume
   `analysis/lhf_sweep-2026-07-11T203836.json`, `analysis/lhf_sweep-llama-f8-2026-07-13.json`.
+
+## RQ2 + LHF replication on corpus v2 (third corpus, positive; magnitude corpus-dependent)
+
+Ran the RQ2 bootstrap CI and the six LHF analyses on the sealed v2 fixed_8 sweep
+(`sweep-v2-f8-2026-07-13`, Qwen pair, corpus v2 = 1,494 prompts / 7 axes, 5,926
+test rounds / 222 test prompts). Script-generated (`modal_app.py::rq2ci`, `::lhf`);
+artifacts `analysis/sweep-v2-f8-2026-07-13/rq2_ci_test.json`,
+`analysis/lhf_sweep-v2-f8-2026-07-13.json`.
+
+- **RQ2 headline replicates, smaller magnitude.** entropy-stop (tau=2.0, dev-frozen)
+  vs best fixed: eff 2.9073 vs 2.7047 = **+7.49%, 95% CI [+6.04%, +9.06%],
+  P(delta<=0)=0/2000** (prompt-grouped, 222 prompts). Wasted draft tokens cut
+  ~49% (stop 0.432 [0.402, 0.464] vs fixed 0.849 [0.769, 0.936], disjoint).
+  Three-corpus range now **+6.7% (Llama), +7.5% (v2), +11.2% (v1)** - always
+  positive; the broader/more-diverse v2 gives a smaller relative gain (more of the
+  corpus is already high-acceptance). tau grid optimum on v2 is tau*=1.8 (dev);
+  tau=2.0 is within -0.24% of it.
+- **The unifying result gets STRONGER on the diverse corpus.** Category-clairvoyant
+  static length lookup captures only **0.2%** of the entropy-stop gain over
+  best-fixed on v2 (vs 12.5% Qwen-v1 / 4.4% Llama) - i.e. ~99.8% of the win is the
+  online within-round entropy signal, essentially none is token-category identity.
+  Pre-round gate +0.82% vs best-fixed / -6.21% vs online; skip hurts (-0.37%);
+  calibration monotone (0.976 at H<=0.25 -> 0.101 at H>6); block-breakers =
+  whitespace 74.6% / content_word 47.1% / function_word 26.1% (lexical word-starts).
+  All six LHF findings replicate on the third corpus.
+- **Bug fixed in passing:** `rq2_ci` / `eval_policies` / `taxonomy` wrote to
+  `/artifacts/analysis/{run_id}/...` without creating the subdir, so the first v2
+  `rq2ci` raised FileNotFoundError (v1 worked only because a prior capture had made
+  the dir). Added `os.makedirs(..., exist_ok=True)` before all three writes;
+  re-ran and it sealed.
+- Logged by Claude, 2026-07-13.

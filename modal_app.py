@@ -574,6 +574,7 @@ def eval_policies(run_id: str = "sweep-2026-07-11T203836", eval_split: str = "de
 
     res = run_eval(f"/artifacts/traces/{run_id}", eval_split, ratio)
     _print(res)
+    os.makedirs(f"/artifacts/analysis/{run_id}", exist_ok=True)
     with open(f"/artifacts/analysis/{run_id}/rq2_length_policies_{eval_split}.json", "w") as f:
         import json as _json
         _json.dump(res, f, indent=2)
@@ -598,6 +599,7 @@ def taxonomy(run_id: str = "sweep-2026-07-11T203836", eval_split: str = "test",
 
     res = run_tax(f"/artifacts/traces/{run_id}", eval_split, ratio, tau)
     _print_tax(res)
+    os.makedirs(f"/artifacts/analysis/{run_id}", exist_ok=True)
     with open(f"/artifacts/analysis/{run_id}/t5_4_taxonomy_{eval_split}.json", "w") as f:
         _json.dump(res, f, indent=2)
     artifacts.commit()
@@ -620,6 +622,7 @@ def rq2_ci(run_id: str = "sweep-2026-07-11T203836", eval_split: str = "test") ->
 
     res = rq2_confidence(f"/artifacts/traces/{run_id}", eval_split)
     print(_json.dumps(res, indent=2))
+    os.makedirs(f"/artifacts/analysis/{run_id}", exist_ok=True)
     with open(f"/artifacts/analysis/{run_id}/rq2_ci_{eval_split}.json", "w") as f:
         _json.dump(res, f, indent=2)
     artifacts.commit()
