@@ -54,15 +54,16 @@ def _pair() -> str:
 def _pair_specs():
     dt = _default_dtype()
     if _pair() == "llama":
-        # Revisions resolved + pinned after the first verify_env download (D014);
-        # None until then (loud warning). CAS_LLAMA_TARGET_REV / _DRAFT_REV allow
-        # pinning the resolved SHA without editing code between resolve and lock.
+        # Revisions resolved via HfApi.model_info on 2026-07-13 (hf_check) and
+        # pinned per the contract; env overrides retained for re-pinning.
         return (
             ModelSpec("meta-llama/Llama-3.1-8B-Instruct",
-                      revision=os.environ.get("CAS_LLAMA_TARGET_REV") or None,
+                      revision=os.environ.get("CAS_LLAMA_TARGET_REV")
+                      or "0e9e39f249a16976918f6564b8830bc894c89659",
                       dtype=dt),
             ModelSpec("meta-llama/Llama-3.2-1B-Instruct",
-                      revision=os.environ.get("CAS_LLAMA_DRAFT_REV") or None,
+                      revision=os.environ.get("CAS_LLAMA_DRAFT_REV")
+                      or "9213176726f574b556790deb65791e0c5aa438b6",
                       dtype=dt),
         )
     return (

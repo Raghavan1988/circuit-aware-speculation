@@ -57,6 +57,13 @@ VOLUMES = {"/root/.cache/huggingface": hf_cache, "/artifacts": artifacts}
 # not need it; attaching is harmless when CAS_PAIR=qwen.
 hf_secret = modal.Secret.from_name("huggingface-token")
 
+# The secret exposes HUGGINGFACE_TOKEN, but huggingface_hub only reads HF_TOKEN —
+# without this mapping the container is silently unauthenticated (root cause of
+# the 2026-07-12/13 gated-repo 401s despite an approved gate). Runs at import
+# time inside every container; harmless locally and when no secret is attached.
+if os.environ.get("HUGGINGFACE_TOKEN") and not os.environ.get("HF_TOKEN"):
+    os.environ["HF_TOKEN"] = os.environ["HUGGINGFACE_TOKEN"]
+
 # GPU tier for model-loading functions. H100 is the canonical runs (needs a
 # payment method on file); override with e.g. `CAS_GPU=A10G modal run ...` to run
 # the correctness gate on a cheaper 24GB card that credits cover without a card.
@@ -85,6 +92,41 @@ def verify_env(pair: str = "qwen") -> dict:
 @app.local_entrypoint()
 def verify(pair: str = "qwen"):
     verify_env.remote(pair)
+
+
+@app.function(image=image, timeout=600, secrets=[hf_secret])  # CPU-only
+def hf_check() -> dict:
+    """Diagnose gated-repo auth: which HF env vars the secret exposes, whose
+    token it is, and whether the two Llama repos are accessible with it."""
+    import os
+
+    keys = sorted(k for k in os.environ
+                  if "HF" in k.upper() or "HUGGING" in k.upper())
+    print("HF-ish env keys in container:", keys)
+    from huggingface_hub import HfApi
+
+    api = HfApi()
+    try:
+        who = api.whoami()
+        print("whoami:", who.get("name"), "| type:", who.get("type"))
+    except Exception as e:
+        print("whoami FAILED (no usable token found by hub):", repr(e)[:200])
+    out = {}
+    for rid in ("meta-llama/Llama-3.1-8B-Instruct",
+                "meta-llama/Llama-3.2-1B-Instruct"):
+        try:
+            mi = api.model_info(rid)
+            out[rid] = mi.sha
+            print(f"{rid} -> ACCESS OK, sha={mi.sha}")
+        except Exception as e:
+            out[rid] = f"FAIL {repr(e)[:120]}"
+            print(f"{rid} -> FAIL: {repr(e)[:160]}")
+    return out
+
+
+@app.local_entrypoint()
+def hfcheck():
+    hf_check.remote()
 
 
 @app.function(image=image, volumes=VOLUMES, timeout=7200)  # CPU-only: no GPU needed
@@ -204,7 +246,8 @@ SWEEP_POLICIES = ("target_only", "skip", "fixed_1", "fixed_2", "fixed_3",
                   "fixed_4", "fixed_6", "fixed_8")
 
 
-@app.function(image=image, gpu=GPU, volumes=VOLUMES, timeout=6 * 3600)
+@app.function(image=image, gpu=GPU, volumes=VOLUMES, timeout=12 * 3600,
+              secrets=[hf_secret])
 def run_policy(
     policy: str,
     run_id: str,
@@ -213,6 +256,8 @@ def run_policy(
     max_new_tokens: int = 256,
     cap: int = 0,
     dtype: str = "bfloat16",
+    corpus: str = "data",  # D022: "data" = v1 (644), "data_v2" = Core v2 (1,494)
+    pair: str = "qwen",    # I17: "qwen" (primary) or "llama" (replication)
 ) -> dict:
     """I07: run one policy over the frozen prompt set into a sealed trace run.
 
@@ -228,6 +273,7 @@ def run_policy(
     import os
 
     os.environ["CAS_DTYPE"] = dtype
+    os.environ["CAS_PAIR"] = pair  # I17: selects Qwen (default) or the Llama pair
     import torch
     import transformers
 
@@ -245,9 +291,9 @@ def run_policy(
     dec = SpeculativeDecoder(pair, cfg)
     tok = pair.tokenizer
 
-    with open("/artifacts/data/prompts.jsonl") as f:
+    with open(f"/artifacts/{corpus}/prompts.jsonl") as f:
         rows = [json.loads(line) for line in f]
-    with open("/artifacts/data/split_manifest.json") as f:
+    with open(f"/artifacts/{corpus}/split_manifest.json") as f:
         manifest = json.load(f)
     assignment = manifest["assignment"]
     manifest_id = hashlib.sha256(
@@ -336,7 +382,10 @@ def run_policy(
             pid = row["prompt_id"]
             prompt_ids = tok(row["prompt_text"])["input_ids"]
             common = dict(dataset=row["dataset"], domain=row["domain"],
-                          split=assignment.get(pid, "unknown"),
+                          # fix 2026-07-13: the split map is keyed by prompt_hash
+                          # (ledger 2026-07-12 data-quality note); keying by
+                          # prompt_id stamped every row "unknown" in the v1 sweep
+                          split=assignment.get(row["prompt_hash"], "unknown"),
                           prompt_hash=row["prompt_hash"])
             if pol == "target_only":
                 out, sw = target_only_decode(prompt_ids)
@@ -539,6 +588,81 @@ def evalp(run_id: str = "sweep-2026-07-11T203836", eval_split: str = "dev",
 
 
 @app.function(image=image, volumes=VOLUMES, timeout=1800)  # CPU-only
+def taxonomy(run_id: str = "sweep-2026-07-11T203836", eval_split: str = "test",
+             ratio: float = 0.1, tau: float = 2.0) -> dict:
+    """T5.4: error taxonomy (over/under-drafting, calibration) + candidate-set
+    ablation over the sealed traces."""
+    import json as _json
+
+    from scripts.error_taxonomy import _print_tax, run as run_tax
+
+    res = run_tax(f"/artifacts/traces/{run_id}", eval_split, ratio, tau)
+    _print_tax(res)
+    with open(f"/artifacts/analysis/{run_id}/t5_4_taxonomy_{eval_split}.json", "w") as f:
+        _json.dump(res, f, indent=2)
+    artifacts.commit()
+    return {"candidate_set": res["candidate_set"],
+            "monotone": res["calibration_monotone_decreasing"]}
+
+
+@app.local_entrypoint()
+def tax(run_id: str = "sweep-2026-07-11T203836", eval_split: str = "test"):
+    taxonomy.remote(run_id, eval_split)
+
+
+@app.function(image=image, volumes=VOLUMES, timeout=1800)  # CPU-only
+def rq2_ci(run_id: str = "sweep-2026-07-11T203836", eval_split: str = "test") -> dict:
+    """Prompt-grouped bootstrap CI for the RQ2 headline (entropy-stop vs best
+    fixed): the error bars a reviewer asks for first."""
+    import json as _json
+
+    from scripts.eval_length_policies import rq2_confidence
+
+    res = rq2_confidence(f"/artifacts/traces/{run_id}", eval_split)
+    print(_json.dumps(res, indent=2))
+    with open(f"/artifacts/analysis/{run_id}/rq2_ci_{eval_split}.json", "w") as f:
+        _json.dump(res, f, indent=2)
+    artifacts.commit()
+    return res
+
+
+@app.local_entrypoint()
+def rq2ci(run_id: str = "sweep-2026-07-11T203836", eval_split: str = "test"):
+    rq2_ci.remote(run_id, eval_split)
+
+
+@app.function(image=image, volumes=VOLUMES, timeout=2 * 3600, secrets=[hf_secret])
+def lhf(run_id: str, tokenizer_id: str = "Qwen/Qwen2.5-7B-Instruct",
+        tokenizer_rev: str = "a09a35458c702b33eeacc393d103063234e8bc28") -> dict:
+    """Low-hanging-fruit analyses (#1,2,3,5,6) over a sealed fixed_8 run. Pure CPU.
+    #4 transfer = compare `calibration_audit.eff_at_tuned_2.0` (Qwen's tau) to this
+    run's own `eff_at_tau_star` (its optimum) — for the Llama/v2 runs that is the
+    zero-shot cross-family / cross-corpus transfer of the controller."""
+    import json as _json
+
+    from scripts.lhf_analysis import run_all
+
+    res = run_all(f"/artifacts/traces/{run_id}", tokenizer_id=tokenizer_id,
+                  tokenizer_rev=tokenizer_rev or None)
+    tag = run_id.replace("/", "_")
+    with open(f"/artifacts/analysis/lhf_{tag}.json", "w") as f:
+        _json.dump(res, f, indent=2)
+    artifacts.commit()
+    print(_json.dumps(res, indent=2))
+    return {"pre_round_gate": res["pre_round_gate"],
+            "calibration_audit": res["calibration_audit"],
+            "skip_economics": res["skip_economics"],
+            "category": res.get("category")}
+
+
+@app.local_entrypoint()
+def lhfrun(run_id: str = "sweep-2026-07-11T203836",
+           tokenizer_id: str = "Qwen/Qwen2.5-7B-Instruct",
+           tokenizer_rev: str = "a09a35458c702b33eeacc393d103063234e8bc28"):
+    lhf.remote(run_id, tokenizer_id, tokenizer_rev)
+
+
+@app.function(image=image, volumes=VOLUMES, timeout=1800)  # CPU-only
 def routing_opp(run_id: str = "sweep-2026-07-11T203836", ratio: float = 0.1) -> dict:
     """RQ3 routing-opportunity scoping (per-domain acceptance + optimal length)."""
     from scripts.eval_length_policies import _print_routing, routing_opportunity
@@ -681,9 +805,13 @@ DRAFT_POOL = (
 )
 
 
-@app.function(image=image, gpu=GPU, volumes=VOLUMES, timeout=6 * 3600)
+@app.function(image=image, gpu=GPU, volumes=VOLUMES, timeout=6 * 3600,
+              secrets=[hf_secret])
 def draft_matrix(max_new: int = 128, cap_per_domain: int = 0,
-                 drafts: str = DRAFT_POOL, corpus: str = "data") -> dict:
+                 drafts: str = DRAFT_POOL, corpus: str = "data",
+                 target: str = "Qwen/Qwen2.5-7B-Instruct",
+                 target_rev: str = "a09a35458c702b33eeacc393d103063234e8bc28"
+                 ) -> dict:
     """Exhaustive RQ3 study: draft x domain acceptance matrix vs one Qwen2.5-7B
     target. Generates the target greedy continuation ONCE per prompt, scores each
     candidate draft's per-token argmax agreement (drift-free acceptance) on the
@@ -698,7 +826,7 @@ def draft_matrix(max_new: int = 128, cap_per_domain: int = 0,
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     torch.set_grad_enabled(False)
-    T_ID, T_REV = "Qwen/Qwen2.5-7B-Instruct", "a09a35458c702b33eeacc393d103063234e8bc28"
+    T_ID, T_REV = target, (target_rev or None)
     ttok = AutoTokenizer.from_pretrained(T_ID, revision=T_REV)
     tv = ttok.get_vocab()
 
@@ -791,6 +919,18 @@ def draft_matrix(max_new: int = 128, cap_per_domain: int = 0,
         if spec in per and gen in per and dom in domains:
             comps[f"{spec.split('/')[-1]} vs {gen.split('/')[-1]} @ {dom}"] = \
                 paired_ci(spec, gen, dom)
+    # generic: each subsequent draft vs the FIRST draft, per domain (pair-agnostic
+    # paired CI). Used for the Llama draft-SIZE supplementary comparison
+    # (3B vs 1B) where the Qwen-specific specialist pairs above don't apply.
+    order = list(per)
+    vs_first = {}
+    if len(order) >= 2:
+        base = order[0]
+        for did in order[1:]:
+            for d in domains:
+                vs_first[f"{did.split('/')[-1]} vs {base.split('/')[-1]} @ {d}"] = \
+                    paired_ci(did, base, d)
+
     # oracle router: best draft per domain vs the general-0.5B incumbent
     oracle = {}
     for d in domains:
@@ -799,9 +939,11 @@ def draft_matrix(max_new: int = 128, cap_per_domain: int = 0,
         oracle[d] = {"best_draft": best.split('/')[-1] if best else None,
                      "best_acc": matrix[best][d] if best else None}
 
-    res = {"corpus": corpus, "max_new": max_new, "n_prompts": len(conts),
-           "domains": domains, "tokenizer_compat": compat, "matrix": matrix,
-           "size_matched_comparisons": comps, "oracle_router": oracle}
+    res = {"corpus": corpus, "target": target, "max_new": max_new,
+           "n_prompts": len(conts), "domains": domains,
+           "tokenizer_compat": compat, "matrix": matrix,
+           "size_matched_comparisons": comps, "vs_first_draft": vs_first,
+           "oracle_router": oracle}
 
     # ---- print ----
     short = lambda s: s.split('/')[-1].replace('Qwen2.5-', '')
@@ -824,8 +966,17 @@ def draft_matrix(max_new: int = 128, cap_per_domain: int = 0,
     print("\n=== ORACLE ROUTER best draft per domain ===")
     for d in domains:
         print(f"  {d}: {oracle[d]['best_draft']} @ {oracle[d]['best_acc']:.3f}")
+    if vs_first:
+        print("\n=== vs FIRST draft (paired, prompt-grouped 95% CI) ===")
+        for k, v in vs_first.items():
+            if v:
+                sig = "SIGNIF" if (v['ci95'][0] > 0 or v['ci95'][1] < 0) else "n.s."
+                print(f"  {k}: diff={v['mean_diff']:+.4f} "
+                      f"CI[{v['ci95'][0]:+.4f},{v['ci95'][1]:+.4f}] n={v['n_prompts']} {sig}")
 
-    suffix = "" if corpus == "data" else f"_{corpus}"  # keep the v1 artifact stable
+    # tag artifact by corpus AND target so Qwen-v1, v2, and Llama runs don't clobber
+    tgt_tag = "" if target.startswith("Qwen/Qwen2.5-7B") else "_" + target.split("/")[-1]
+    suffix = ("" if corpus == "data" else f"_{corpus}") + tgt_tag
     with open(f"/artifacts/analysis/rq3_draft_matrix{suffix}.json", "w") as f:
         json.dump(res, f, indent=2)
     artifacts.commit()
@@ -833,8 +984,12 @@ def draft_matrix(max_new: int = 128, cap_per_domain: int = 0,
 
 
 @app.local_entrypoint()
-def draftmatrix(max_new: int = 128, cap_per_domain: int = 0, corpus: str = "data"):
-    draft_matrix.remote(max_new, cap_per_domain, corpus=corpus)
+def draftmatrix(max_new: int = 128, cap_per_domain: int = 0, corpus: str = "data",
+                drafts: str = DRAFT_POOL,
+                target: str = "Qwen/Qwen2.5-7B-Instruct",
+                target_rev: str = "a09a35458c702b33eeacc393d103063234e8bc28"):
+    draft_matrix.remote(max_new, cap_per_domain, drafts=drafts, corpus=corpus,
+                        target=target, target_rev=target_rev)
 
 
 @app.function(image=image, gpu=GPU, volumes=VOLUMES, timeout=3600)

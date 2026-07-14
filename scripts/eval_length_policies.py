@@ -124,27 +124,100 @@ def make_cost_serving(ratio):
 
 
 def evaluate(rounds, policy, cost_serving, alpha=0.3):
+    """Replay one length policy over the round stream. Stateless policies are
+    plain callables; ONLINE controllers (bandits) may carry internal state and
+    expose .update(L, accepted_k, serving_cost) which is called after every
+    round — the roadmap's online-controller protocol. Also records efficiency
+    per stream quartile so cold-start convergence is visible."""
     emit = drafted = accepted = n = 0
     fw_launch = fw_serving = 0.0
+    seq: list = []  # (emitted, serving_cost) in stream order, for quartiles
     for req_rounds in rounds:
         mem: dict = {}
         for rnd in req_rounds:
             L = policy(rnd, mem)
             k = accepted_under(rnd["match"], L)
             e = k + 1
+            cs = cost_serving(L)
             emit += e; drafted += L; accepted += k; n += 1
             fw_launch += cost_launch(L)
-            fw_serving += cost_serving(L)
+            fw_serving += cs
+            seq.append((e, cs))
+            if hasattr(policy, "update"):  # online bandit feedback
+                policy.update(L, k, cs)
             # update recent-acceptance EMA (fraction of drafted accepted this round)
             frac = (k / L) if L > 0 else 1.0
             mem["ema"] = frac if mem.get("ema") is None else (
                 alpha * frac + (1 - alpha) * mem["ema"])
     wasted = drafted - accepted
+    quartiles = []
+    if n >= 8:
+        q = n // 4
+        for i in range(4):
+            chunk = seq[i * q: (i + 1) * q if i < 3 else n]
+            quartiles.append(round(sum(e for e, _ in chunk)
+                                   / sum(c for _, c in chunk), 4))
     return {"yield": emit / n, "wasted_per_emit": wasted / emit,
             "eff_launch": emit / fw_launch, "eff_serving": emit / fw_serving,
+            "eff_serving_quartiles": quartiles,
             "n_rounds": n, "emit": emit, "drafted": drafted, "accepted": accepted,
             "fw_serving": fw_serving,
             "accept_rate": (accepted / drafted) if drafted else 0.0}
+
+
+# ---- T5.3 online length controllers (roadmap ablation A2) -------------------
+class EpsGreedyLength:
+    """Epsilon-greedy bandit over draft lengths; state persists across the whole
+    request stream (online). Reward = emitted tokens per unit serving cost."""
+
+    def __init__(self, arms=ACTIONS, eps: float = 0.1, seed: int = 0):
+        import random
+
+        self.arms = tuple(arms)
+        self.eps = eps
+        self.rng = random.Random(seed)
+        self.val = {a: 0.0 for a in self.arms}
+        self.n = {a: 0 for a in self.arms}
+
+    def __call__(self, rnd, mem):
+        for a in self.arms:            # play every arm once first
+            if self.n[a] == 0:
+                return a
+        if self.rng.random() < self.eps:
+            return self.rng.choice(self.arms)
+        return max(self.arms, key=lambda a: self.val[a])
+
+    def update(self, L, k, cost):
+        r = (k + 1) / cost
+        self.n[L] += 1
+        self.val[L] += (r - self.val[L]) / self.n[L]
+
+
+class UCBLength:
+    """UCB1 over draft lengths (BanditSpec-style), online across the stream.
+    Rewards are tokens-per-unit-serving-cost (~1-3.3); c=1.0 radius."""
+
+    def __init__(self, arms=ACTIONS, c: float = 1.0):
+        self.arms = tuple(arms)
+        self.c = c
+        self.val = {a: 0.0 for a in self.arms}
+        self.n = {a: 0 for a in self.arms}
+        self.t = 0
+
+    def __call__(self, rnd, mem):
+        import math
+
+        self.t += 1
+        for a in self.arms:
+            if self.n[a] == 0:
+                return a
+        return max(self.arms, key=lambda a: self.val[a]
+                   + self.c * math.sqrt(math.log(self.t) / self.n[a]))
+
+    def update(self, L, k, cost):
+        r = (k + 1) / cost
+        self.n[L] += 1
+        self.val[L] += (r - self.val[L]) / self.n[L]
 
 
 def _tune_tau(rounds, cost_serving):
@@ -161,7 +234,9 @@ def _tune_tau(rounds, cost_serving):
 def run(run_dir, eval_split="dev", draft_ratio=0.1, frozen_tau=None):
     by_req = _rounds_by_request(run_dir)
     split = _split_of(run_dir)
-    rounds = [rs for rid, rs in by_req.items() if split.get(rid) == eval_split]
+    # sorted -> deterministic stream order (matters for the online bandits)
+    rounds = [rs for rid, rs in sorted(by_req.items())
+              if split.get(rid) == eval_split]
     cost_serving = make_cost_serving(draft_ratio)
 
     # threshold is ALWAYS tuned on dev; on test we use that frozen value so the
@@ -179,6 +254,16 @@ def run(run_dir, eval_split="dev", draft_ratio=0.1, frozen_tau=None):
     results[f"entropy_stop(tau={tau})"] = evaluate(
         rounds, entropy_stop_policy(tau), cost_serving)
     results["history_ema"] = evaluate(rounds, history_policy(), cost_serving)
+    # T5.3: online bandits, learning on the stream itself (cold start included)
+    results["ucb_bandit"] = evaluate(rounds, UCBLength(), cost_serving)
+    eps_effs = []
+    for seed in (0, 1, 2):
+        r = evaluate(rounds, EpsGreedyLength(seed=seed), cost_serving)
+        eps_effs.append(r["eff_serving"])
+        if seed == 0:
+            results["eps_greedy(seed0)"] = r
+    results["eps_greedy(seed0)"]["eff_serving_mean3seeds"] = round(
+        sum(eps_effs) / len(eps_effs), 4)
     results["ORACLE_launch"] = evaluate(rounds, oracle_policy(cost_launch), cost_serving)
     results["ORACLE_serving"] = evaluate(rounds, oracle_policy(cost_serving), cost_serving)
     return {"eval_split": eval_split, "draft_ratio": draft_ratio, "tau": tau,
@@ -193,11 +278,20 @@ def _print(res):
     print(f"{'policy':<22}{'yield':>8}{'wasted/emit':>13}{'eff_launch':>12}{'eff_serving':>13}")
     order = [k for k in P if k.startswith('fixed')] + \
             [k for k in P if k.startswith('entropy')] + \
-            ['history_ema', 'ORACLE_launch', 'ORACLE_serving']
+            ['history_ema'] + \
+            [k for k in P if 'bandit' in k or 'greedy' in k] + \
+            ['ORACLE_launch', 'ORACLE_serving']
     for k in order:
         m = P[k]
         print(f"{k:<22}{m['yield']:>8.3f}{m['wasted_per_emit']:>13.3f}"
               f"{m['eff_launch']:>12.4f}{m['eff_serving']:>13.4f}")
+    for k in [k for k in P if 'bandit' in k or 'greedy' in k]:
+        q = P[k].get("eff_serving_quartiles")
+        if q:
+            print(f"  {k} convergence (eff by stream quartile): "
+                  f"{q[0]} -> {q[1]} -> {q[2]} -> {q[3]}"
+                  + (f"; mean over 3 seeds {P[k]['eff_serving_mean3seeds']}"
+                     if 'eff_serving_mean3seeds' in P[k] else ""))
     # headline comparisons
     best_fixed_serv = max((k for k in P if k.startswith('fixed')),
                           key=lambda k: P[k]['eff_serving'])
@@ -219,6 +313,62 @@ def _print(res):
 def _domain_of(run_dir):
     summ = _read(os.path.join(run_dir, "fixed_8", "request_summaries.parquet"))
     return {s["request_id"]: s["domain"] for s in summ}
+
+
+def rq2_confidence(run_dir, eval_split="test", draft_ratio=0.1, tau=2.0,
+                   n_boot=2000, seed=0):
+    """Prompt-grouped bootstrap CI for the RQ2 headline: entropy-stop (dev-frozen
+    tau) vs the best fixed length, on the held-out split. Both policies are
+    per-request stateless, so per-prompt contributions are exact; prompts are the
+    exchangeable unit (contract: never token/round-level resampling)."""
+    import random
+
+    by_req = _rounds_by_request(run_dir)
+    split = _split_of(run_dir)
+    cost = make_cost_serving(draft_ratio)
+    policies = (entropy_stop_policy(tau), fixed_policy(8))
+    reqs = []                      # per prompt: [(emit, cost, drafted, accepted)] x2
+    for rid, rs in sorted(by_req.items()):
+        if split.get(rid) != eval_split:
+            continue
+        stats = []
+        for pol in policies:
+            emit = cst = dr = acc = 0
+            for rnd in rs:
+                L = pol(rnd, {})
+                k = accepted_under(rnd["match"], L)
+                emit += k + 1; cst += cost(L); dr += L; acc += k
+            stats.append((emit, cst, dr, acc))
+        reqs.append(stats)
+
+    def agg(sample):
+        tot = [[0, 0, 0, 0], [0, 0, 0, 0]]
+        for pair in sample:
+            for i in range(2):
+                for j in range(4):
+                    tot[i][j] += pair[i][j]
+        (eE, cE, dE, aE), (eF, cF, dF, aF) = tot
+        return {"delta_eff_rel": (eE / cE) / (eF / cF) - 1,
+                "wasted_stop": (dE - aE) / eE, "wasted_fixed": (dF - aF) / eF}
+
+    point = agg(reqs)
+    rng = random.Random(seed)
+    boots = []
+    for _ in range(n_boot):
+        boots.append(agg([reqs[rng.randrange(len(reqs))] for _ in reqs]))
+    def ci(key):
+        v = sorted(b[key] for b in boots)
+        return [v[int(0.025 * n_boot)], v[int(0.975 * n_boot)]]
+    deltas = [b["delta_eff_rel"] for b in boots]
+    return {"eval_split": eval_split, "n_prompts": len(reqs), "tau": tau,
+            "draft_ratio": draft_ratio, "n_boot": n_boot,
+            "delta_eff_rel": point["delta_eff_rel"],
+            "delta_eff_rel_ci95": ci("delta_eff_rel"),
+            "p_delta_le_0": sum(d <= 0 for d in deltas) / n_boot,
+            "wasted_stop": point["wasted_stop"],
+            "wasted_stop_ci95": ci("wasted_stop"),
+            "wasted_fixed": point["wasted_fixed"],
+            "wasted_fixed_ci95": ci("wasted_fixed")}
 
 
 def routing_opportunity(run_dir, draft_ratio=0.1):

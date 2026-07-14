@@ -303,6 +303,48 @@ Artifacts: `analysis/…/rq2_length_policies_test.json`, `t5_4_taxonomy_test.jso
   stop 0.408 [0.388, 0.430] vs fixed 1.081 [1.008, 1.157].
 - Logged by Claude, 2026-07-13.
 
+### 2026-07-13 — I17 Llama replication unblocked; cross-family equivalence gate passes (fp32 118/118)
+
+- **Access resolved:** the Modal `huggingface-token` secret exposed `HUGGINGFACE_TOKEN`,
+  but `huggingface_hub`/`transformers` read `HF_TOKEN` — root cause of the
+  2026-07-12/13 gated-repo 401s despite an approved gate. Fixed by mapping the var
+  at container import + refreshing the token (owner). `hfcheck`: whoami=Raghavan1988,
+  both repos ACCESS OK; real download + forward succeeded.
+- **Tokenizer compatibility (cross-family):** Llama-3.1-8B-Instruct and
+  Llama-3.2-1B-Instruct share the 128,256-vocab Llama-3 tokenizer; `load_pair` did
+  not raise → exact-match speculative decoding is valid on this pair. Revisions
+  pinned: target `0e9e39f2…`, draft `9213176726f5…` (config.py, D014).
+- **Equivalence gate:** `run_tests(dtype=float32, pair=llama)` on A100-80GB →
+  **118 passed, 0 failed** (261.7s), including the GPU bit-identity tests
+  (fixed lengths, skip, stop-rule, eos, D018 fields, fp-divergence). The exact
+  greedy engine is lossless on the Llama pair, replicating the fp32 Qwen result.
+- **Scope:** confirms the ENGINE cross-family. The science replication (atlas,
+  RQ2 adaptive length) follows from the Llama fixed_8 sweep
+  (`sweep-llama-f8-2026-07-13`, v1 corpus, bf16, max_new=256). RQ3 draft-routing is
+  NOT replicated cross-family (no tokenizer-compatible Llama code/math specialist
+  draft pool) — stated boundary, not fudged.
+- Logged by Claude, 2026-07-13.
+
+### 2026-07-13 — RQ3 replicated on the representative v2 corpus (7 axes): no-go confirmed and strengthened
+
+Draft x domain matrix on corpus v2 (`rq3_draft_matrix_data_v2.json`, 1,494 prompts,
+7 axes incl. the new translation / qa_rag / structured). Same 5 Qwen drafts vs the
+7B target; drift-free acceptance; prompt-grouped paired 95% CIs.
+
+- **general-1.5B is the best draft in EVERY axis** (oracle router = general-1.5B for
+  all 7 domains), including the new ones: qa_rag 0.691, structured 0.875, translation 0.714.
+- Size-matched specialist vs general: Coder-0.5B−general-0.5B @ code −0.0031
+  [−0.0067, +0.0004] (tie); Coder-1.5B−general-1.5B @ code −0.0062 [−0.0094, −0.0032]
+  (**significantly worse**); Math-1.5B−general-1.5B @ math −0.0088 [−0.0128, −0.0050]
+  (**significantly worse**).
+- The math specialist collapses on off-domain content (qa_rag 0.461 vs 0.691,
+  structured 0.678 vs 0.875, translation 0.492 vs 0.714 vs the same-size general):
+  domain-tuning drifts the draft away from the general target's distribution.
+- **Verdict:** RQ3 draft-routing no-go holds — and is stronger — on the
+  representative corpus. Draft SIZE dominates specialization across all 7 axes;
+  routing among off-the-shelf specialists yields ~zero benefit.
+- Logged by Claude, 2026-07-13.
+
 ## Evidence record template
 
 When updating a claim, append:
@@ -496,3 +538,60 @@ hand-entered.
   deferred to Tier-2/G4 (D009/D010). The dual-mode seam itself works and is in
   place; it just has nothing to compile *to* until a static-cache path exists.
 - Logged by Claude, 2026-07-12.
+
+## Low-hanging-fruit analyses (LHF #1-6), offline on sealed fixed_8 traces
+
+Six CPU-only analyses over the sealed Qwen-v1 (`sweep-2026-07-11T203836`, 19,074
+test rounds) and Llama (`sweep-llama-f8-2026-07-13`, 15,500 test rounds) fixed_8
+counterfactual traces. All numbers script-generated (`scripts/lhf_analysis.py`,
+`modal_app.py::lhf`), dev-tuned / test-reported, serving-cost efficiency
+(draft priced 0.1x verify). Both families give the SAME qualitative picture;
+Llama's absolute efficiency is higher (3.17 vs 2.67 tok/round-cost).
+
+- **#2 Calibration-optimal stopping (positive, sharpens RQ2).** On a fine tau
+  grid (0.1-6.0) the entropy-stop optimum is tau*=2.0 on dev for BOTH families,
+  and the RQ2 headline tau=2.0 is within 0.0% of that test optimum. So tau=2.0 is
+  not a lucky pick, it is the calibrated optimum. P(accept | draft entropy) is
+  monotone decreasing (Qwen 0.969 at entropy<=0.25 down to 0.16 at >6; Llama
+  0.993 down to ~0.35), i.e. draft entropy is a well-calibrated acceptance
+  predictor. Per-position economic breakeven is p_accept=0.091 (=0.1/1.1);
+  the block-level entropy stop beats the myopic per-position rule because one
+  high-entropy position predicts the rest of the block also fails.
+- **#1 Pre-round gate / C10 (bounds the pre-round-only story).** Choosing L
+  before drafting from the PREVIOUS round's frontier entropy (dev-tuned bin->L
+  map) beats best-fixed by only +3.54% (Qwen) / +1.13% (Llama), i.e. it recovers
+  ~1/3 to ~1/2 of the within-round entropy-stop gain (-6.89% / -5.20% vs
+  within-round). The dev-tuned map is sensible (high frontier entropy -> shorter
+  L). **The bulk of the controllable headroom needs the ONLINE within-round draft
+  signal, not a pre-round prediction.** skip_frac=0: the pre-round gate never
+  elected a lossless full skip -> no purchase for a pre-round skip predictor
+  (consistent with the ~2% routing headroom).
+- **#5 Skip economics (negative, kills learned-skip).** Under 0.1x serving cost,
+  allowing L=0 (pure-AR fallback) slightly HURTS: eff_with_skip < eff_no_skip by
+  -0.71% (Qwen) / -0.31% (Llama), despite the tau=2 controller electing skip
+  22.6% / 16.2% of rounds. The draft is cheap enough that always drafting >=1
+  dominates; a learned skip gate is not a source of gains.
+- **#3 Headroom attribution (negative for content-static).** A category-clairvoyant
+  static length lookup (know the upcoming token's category, use its dev-optimal L)
+  captures only 12.5% (Qwen) / 4.4% (Llama) of the entropy-stop gain over
+  best-fixed. **~88-96% of RQ2's win is carried by the dynamic entropy signal, not
+  by token-category identity** -> reinforces the RQ3 no-go (domain/category routing
+  has little headroom).
+- **#6 Block-breaker atlas (descriptive).** The first rejected token in a block is
+  overwhelmingly a leading-space word token: whitespace-prefixed 77%, content_word
+  50%, function_word ~30% of breaks (multi-labeled) in BOTH families; punctuation,
+  numbers, named entities, code delimiters are each <14%. Block termination is
+  driven by ordinary lexical divergence at word starts, not by structural/boundary
+  tokens.
+- **#4 Zero-shot controller transfer (positive).** Qwen's dev-optimal tau (2.0)
+  applied to Llama is within 0.0% of Llama's OWN dev-optimal tau (also 2.0): the
+  entropy-stop controller transfers cross-family with no re-tuning. The
+  calibration curve, block-breaker profile, and attribution all replicate across
+  Qwen and Llama.
+- **Unifying result:** essentially all controllable speculative-decoding headroom
+  lives in the ONLINE, within-round draft-entropy signal. Pre-round, category-
+  static, and skip alternatives each recover only a small fraction (or are
+  negative), and the tau=2.0 stop is provably calibration-optimal and transfers
+  zero-shot across model families.
+- Logged by Claude, 2026-07-13. Artifacts: volume
+  `analysis/lhf_sweep-2026-07-11T203836.json`, `analysis/lhf_sweep-llama-f8-2026-07-13.json`.
