@@ -1,160 +1,144 @@
-# Content-Aware Speculation Control — Methodology & Implementation
+# How It Works: Methods & Implementation
 
-How the harness, evaluation corpus, and per-question analyses are built. Every
-reported number is script-generated from immutable, write-once trace artifacts.
+> **In one line:** We built a fast, exact way to run a big language model, and a careful way to measure it. Every number in our reports comes from a script reading saved data files — never typed by hand.
 
 - **Date:** 2026-07-13
 - **Engine:** exact greedy
-- **Pairs:** Qwen, Llama
-- **Companion:** Progress Debrief
-- **Source artifact:** https://claude.ai/code/artifact/d6fb20a7-e44b-47ef-bcf4-e1c83221ae76
+- **Models tested:** Qwen and Llama pairs
+- **Companion doc:** Progress Debrief
+- **Live version:** https://claude.ai/code/artifact/d6fb20a7-e44b-47ef-bcf4-e1c83221ae76
 
 ---
 
-## A. The harness
+## First, the big idea (plain English)
 
-An **exact, lossless** speculative-decoding engine: the target's greedy argmax is
-the reference, so committed output is token-identical to target-only greedy.
-Correctness is separated from timing by a dual-mode seam (D021): an eager,
-hookable path for all science, and a compile/fuse path for timing only.
+Big language models are slow because they write **one word at a time**. Each word needs a full pass through the model.
 
-### Engine components
+**Speculative decoding** is a trick to go faster. It uses two models:
 
-- **Target 7B** — Ground-truth verifier. One batched forward per round over
-  `[uncached gap + proposals]`; its **argmax is the reference output** (lossless).
-  Qwen2.5-7B-Instruct, pinned revision, bf16, eager.
-- **Draft 0.5B** — Cheap proposer sharing the target's vocabulary (asserted
-  equal). Autoregressively proposes up to L tokens, one forward each.
-- **Verify + commit** — Pure stdlib rule: accept the maximal prefix where
-  `d_i == t_i` (length k), emit `d_1..d_k + t_(k+1)`, report `first_rejection`.
-  Torch-free, CPU unit-tested.
-- **KV caches** — Two persistent caches with covered-length trackers; each round
-  re-feeds only the bounded gap, then both crop back to `context + k` so rejected
-  and bonus tokens are re-processed next round.
-- **Signal recorder** — Per position: draft entropy + top1-top2 margin (fp32,
-  nats). D018 byproduct: target frontier entropy/margin at the accepted tail,
-  timed under a tracing clock so the sync stays inside end-to-end latency.
-- **Controller** — A `RoundContext -> L` callable over the action set
-  `{0,1,2,3,4,6,8}`. Both the pick and the commit run inside the controller
-  clock, so all overhead is charged to latency.
+- A **small, fast model** (the "draft") guesses the next few words.
+- A **big, accurate model** (the "target") checks all those guesses **at once**, in a single pass.
 
-### One speculative round (decode loop)
+If the small model guessed right, we keep those words for free — we got several words for the price of one big check. If it guessed wrong, we throw out the bad guesses and keep going. The key promise: **the final text is exactly what the big model would have written alone.** We never trade quality for speed.
 
-1. **Controller pick** (timed): `L = policy(ctx)`.
-2. **Draft** (timed): re-feed draft gap, greedy-propose up to L; record
-   entropy/margin; optional early stop-rule.
-3. **Verify** (timed): one batched target forward over gap + proposals; argmax
-   the last L+1 positions.
-4. **Commit** (timed): accept prefix k; emit accepted + one target bonus token;
-   record `first_rejection`.
-5. **Cache rollback**: crop both caches to `context + k`.
-6. **Emit + stop**: append emitted ids; halt at first eos (greedy-identical) or
-   max_new.
-7. **Record** (timed): frontier target entropy/margin, the freshest
-   pre-next-round signal.
-8. **Trace**: write RoundTrace (proposed ids, target argmax, k, latencies) and
-   loop.
+Two words we use a lot:
 
-### Counterfactual labeling (the key idea)
+- **Accept** — the big model agrees with a guess, so we keep it.
+- **Draft length (L)** — how many words the small model guesses before we check. Guess too few and we waste the big model's parallel check. Guess too many and we waste the small model's time on words that get thrown out.
 
-Each round stores the full **match vector** `m_i = (d_i == t_i)` at every drafted
-position, independent of where acceptance actually stopped. Exact-greedy
-acceptance is the all-true prefix, so any shorter action H's accepted length is
-just the first-false-truncated prefix of `m[:H]`. A **fixed_8** run therefore
-labels **all** actions {0..8} offline from one trace, with **zero extra
-forwards**.
-
-### Equivalence gate + dual mode
-
-A GPU test asserts `output == greedy_reference` for every fixed length
-(independent code path); the **fp32** knob forces batched-verify and
-sequential-decode to agree at ~1e-7. Gate passes **118/118** on the Llama pair.
-Timing-only fast paths (compile / fused attention) never touch the eager capture
-path and must re-pass equivalence before yielding any scientific number.
-
-> **Figure A — One round.** Solid = data flow within the round; dashed =
-> pre-draft feedback to the controller. Draft cost tracks layer count, not
-> parameters (launch-bound), so the 0.5B draft and 7B verify are comparably
-> priced on the eager harness.
+Our research asks: *can we pick a smart draft length on the fly, and does it help to swap in different small models for different topics?*
 
 ---
 
-## B. Evaluation corpus and collection
+## A. The engine (the machine that does the work)
 
-Under greedy exact-match, per-token acceptance is deterministic in
-(draft, target, context), so **corpus breadth is the load-bearing decision**
-(D022). Corpus v2 spans 7 representativeness axes over 9 public sources, split by
-prompt group before any trace-derived fit.
+Our engine is **exact and lossless**. That means the words it produces are **identical** to what the big model would produce on its own. We treat the big model's top pick as the correct answer, always.
 
-| Source                 | Axis          | License (SPDX)              | Prompts |
-|------------------------|---------------|----------------------------|--------:|
-| HumanEval              | code          | MIT                        |     164 |
-| MBPP (sanitized)       | code          | CC-BY-4.0                  |     200 |
-| GSM8K                  | math          | MIT                        |     200 |
-| MT-Bench               | chat          | Apache-2.0                 |      80 |
-| OASST1                 | chat          | Apache-2.0                 |     150 |
-| WMT14 de-en            | translation   | shared-task terms          |     150 |
-| Natural Questions Open | qa_rag        | CC-BY-SA-3.0               |     200 |
-| JSONSchemaBench        | structured    | MIT                        |     150 |
-| CNN / DailyMail        | summarization | Apache-2.0 code; row-ids only | 200 |
-| **Total** — 9 sources · 7 axes · prompt-grouped | | |   **1,494** |
+We keep two jobs separate on purpose (a design rule we call D021):
 
-- **Split** — **Prompt-grouped** by `group_key` = prompt_hash (conversation-tree
-  id for OASST1; dedup-cluster for near-duplicates). Split runs before any fit;
-  the manifest is then frozen. **Token-level random splits are prohibited.**
-- **Provenance** — Every record carries `spdx` + `row_id`; copyright-text sources
-  ship row-ids only with in-house completions; a NOTICE file accompanies the
-  release.
-- **Versioning** — Built to `data_v2/` (D022) so the sealed v1 corpus and all
-  prior analyses stay valid.
+1. A **hookable path** — easy to inspect and measure. Used for all the science.
+2. A **fast path** — used only when we time speed. It never touches the science path.
 
-> **Figure B — Collection pipeline.** 9 sources → normalize + license-tag →
-> dedup + hash (group_key) → prompt-grouped split (freeze manifest) → dev/test →
-> sealed fixed_8 parquet. Sealed fixed_8 traces are the single immutable input to
-> every downstream analysis; nothing is recomputed by hand.
+### The parts of the engine
+
+| Part | What it does |
+|---|---|
+| **Target (big model, 7B)** | The judge. Runs one pass per round and checks all the guesses. Its top pick is the "correct" answer. (Qwen2.5-7B-Instruct, fixed version, run in `bf16`.) |
+| **Draft (small model, 0.5B)** | The guesser. Proposes up to L words, one at a time. Shares the same vocabulary as the big model. |
+| **Verify + commit** | The referee. Keeps the longest run of guesses that match the big model, then adds one guaranteed-correct word. Simple, plain code — tested on a normal CPU. |
+| **Memory caches (KV)** | Both models remember what they've already read, so they don't redo work. After each round, the memory is trimmed back to exactly what was accepted. |
+| **Signal recorder** | Notes, for every guess, how unsure the small model was (its "entropy" and "margin"). This is the data our smart controller later reads. |
+| **Controller** | The decision-maker. Before each round it picks the draft length L from the menu `{0, 1, 2, 3, 4, 6, 8}`. (0 means "skip guessing this round.") |
+
+### One round, step by step
+
+1. **Pick a length.** The controller chooses L.
+2. **Guess.** The small model proposes up to L words and records how confident it was.
+3. **Check.** The big model does one pass over all the guesses.
+4. **Commit.** Keep the matching guesses plus one correct word.
+5. **Trim memory.** Roll both caches back to what was accepted.
+6. **Stop?** Halt at the end-of-text signal or the length limit.
+7. **Record.** Save a fresh confidence signal for the next round.
+8. **Log.** Write down everything (the guesses, the big model's picks, timings) and repeat.
+
+### The clever trick that saves us money
+
+Here's the idea that makes the whole project cheap.
+
+Every round, we don't just record *where* the guessing stopped. We record **whether each guess matched**, at *every* position — even past the stopping point. We call this the **match vector**.
+
+Why it matters: with that full record, we can answer "what would have happened with a **different** draft length?" **without re-running any model.** One expensive run (guessing 8 words each time) lets us score *every* possible length setting for free, just by reading the saved file.
+
+So all our later analysis is **replaying saved data**, not paying for new GPU runs.
+
+### How we know it's correct
+
+We run a test that checks the engine's output word-for-word against the big model alone. It must match every time.
+
+- We can force full-precision math so both paths agree to about 1 part in 10 million.
+- On the Llama model pair, this check **passed 118 out of 118 times.**
+- The fast (timing-only) path must re-pass this same check before any of its numbers count.
+
+> **Figure A — one round.** Solid arrows show data moving inside a round; the dashed arrow is a cheap hint passed to the controller for the next round. Fun fact: the small model's cost depends on its *number of layers*, not its size — which is why a 14×-smaller draft isn't 14× faster on our research setup.
 
 ---
 
-## C. Per-question implementation
+## B. The test data (and how we collected it)
 
-All three questions are answered **offline** from the same sealed fixed_8 traces.
-One trace per prompt yields per-position acceptance for every action, so the
-controllers, the draft × domain matrix, and the atlas are replays, not new GPU
-runs.
+Because our engine is exact, whether a word gets accepted depends only on the two models and the text so far — nothing random. So the **variety of our test prompts is the single most important choice** (design rule D022).
 
-> **Figure C — Sequence for one round** (solid) with pre-draft feedback (dashed).
-> The payoff: the counterfactual match vector makes every downstream question a
-> cheap replay of sealed traces — ONE fixed_8 trace labels all actions {0..8}
-> with zero extra forwards → RQ2 headroom · RQ3 draft × domain matrix · LHF ·
-> acceptance atlas.
+Corpus version 2 covers **7 kinds of task** from **9 public sources**:
 
-### Metric and confidence
+| Source | Task type | License | Prompts |
+|---|---|---|---|
+| HumanEval | code | MIT | 164 |
+| MBPP (sanitized) | code | CC-BY-4.0 | 200 |
+| GSM8K | math | MIT | 200 |
+| MT-Bench | chat | Apache-2.0 | 80 |
+| OASST1 | chat | Apache-2.0 | 150 |
+| WMT14 de-en | translation | shared-task terms | 150 |
+| Natural Questions Open | Q&A / retrieval | CC-BY-SA-3.0 | 200 |
+| JSONSchemaBench | structured output | MIT | 150 |
+| CNN / DailyMail | summarization | Apache-2.0 code; IDs only | 200 |
+| **Total** | **7 task types** | | **1,494** |
+
+Three ground rules:
+
+- **How we split the data.** We divide prompts into a "practice" set and a "final exam" set **by whole prompt**, before doing any tuning. Then we freeze the split. We never split in the middle of a single prompt — that would let answers leak from practice into the exam.
+- **Where each row came from.** Every item carries its license and a source ID. For sources with copyright concerns, we ship only the row ID plus our own model's output — not the original text.
+- **Versioning.** Version 2 lives in its own folder, so all the older version-1 results stay valid and untouched.
+
+> **Figure B — the pipeline.** 9 sources → clean up and tag licenses → remove duplicates → split by prompt (then freeze) → practice/exam sets → sealed data files. Those sealed files are the one and only input to every result. Nothing is recomputed by hand.
+
+---
+
+## C. How we answer each question
+
+All three questions are answered **offline** — by replaying the sealed data. Thanks to the match-vector trick, one saved run per prompt tells us the answer for every draft length, every draft model, and the acceptance atlas. No new GPU runs needed.
+
+### The score we use (and how sure we are)
+
+We measure **efficiency**: useful words produced, divided by the work spent. We price a small-model guess at one-tenth the cost of a big-model check (a realistic serving assumption).
 
 ```
-# serving-cost efficiency (draft priced at 0.1x a verify forward)
-eff_serving = Σ emit(L) / Σ cost(L)     cost(L) = 1 + 0.1·L,  emit(L) = accepted_under(match, L) + 1
-# accepted_under = leading all-match prefix of the first L proposals; +1 = target bonus token
-CI = prompt-grouped bootstrap, 2000 resamples over prompts, 95% percentile interval, plus P(Δ≤0)
+efficiency = (total words kept) / (total cost)
+
+    cost of a round with length L = 1 + 0.1 × L
+    words kept                    = matching guesses + 1 free correct word
 ```
 
-### How each question is computed
+To know how confident we are, we use a **prompt-grouped bootstrap**: we resample whole prompts 2,000 times and report the middle 95% range, plus the chance the true gain is zero or negative.
 
-- **RQ2 · length** — Replay each policy on the trace's counterfactual labels;
-  accumulate (emit, cost) per prompt; compare entropy-stop (τ frozen from dev) vs
-  best fixed by **prompt-grouped bootstrap**. Bandits replay online across the
-  stream.
-- **RQ3 · routing** — Drift-free, teacher-forced acceptance of each draft against
-  a shared target greedy continuation, per domain/axis. **Size-matched paired**
-  bootstrap CIs (specialist minus same-size general) over prompts; oracle
-  router = per-axis best draft.
-- **RQ1 · joint** — Compose the length controller with the routing oracle.
-  Because the routing axis is a no-go, the joint value equals the length
-  controller alone: RQ1 reduces to RQ2 on this pair.
+### The three questions
+
+| Question | How we compute it |
+|---|---|
+| **RQ2 · draft length** | Replay each length policy on the saved match vectors. Compare our smart "entropy-stop" rule (tuned on practice, frozen for the exam) against the best fixed length. |
+| **RQ3 · draft routing** | Score each candidate small model against the *same* big-model output, per task type. Use paired, same-size comparisons. The "oracle router" always picks the best model for each task. |
+| **RQ1 · joint** | Combine the length controller with the routing oracle. Since routing turned out to add nothing, the joint answer just equals the length controller — RQ1 reduces to RQ2 for this model pair. |
+
+> **Figure C — one round, then the payoff.** The top of the figure is a single round. The bottom band is the reward: because we saved the full match vector, one run answers **all** downstream questions cheaply — draft length, draft routing, and the acceptance atlas.
 
 ---
 
-*Naming follows the G2 gate ("representation" / "diagnostic signal" until
-interventions pass) and D008 (dates and generic descriptions only). Action set
-{0,1,2,3,4,6,8}; 0 = skip (pure autoregressive step). Reproduced from sealed runs
-sweep-2026-07-11T203836 (Qwen) and sweep-llama-f8-2026-07-13 (Llama). Companion
-document: Progress Debrief.*
+*A few naming notes: we say "representation" or "diagnostic signal" (not "mechanism") until deeper tests pass, and we refer to timeframes by date only. Length menu is `{0, 1, 2, 3, 4, 6, 8}`, where 0 means no guessing. These results come from sealed runs `sweep-2026-07-11T203836` (Qwen) and `sweep-llama-f8-2026-07-13` (Llama). Companion document: Progress Debrief.*
