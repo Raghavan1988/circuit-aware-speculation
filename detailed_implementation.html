@@ -1,0 +1,377 @@
+<title>How It Works — Methods &amp; Implementation</title>
+<style>
+  :root{
+    --bg:#F5F8FA; --sheet:#FFFFFF; --panel:#EDF3F7; --panel-2:#E4EDF3;
+    --ink:#132330; --ink-2:#41586B; --muted:#6C7E8D; --border:#D5E0E8; --hair:#E4ECF2;
+    --accent:#0C8A8F; --accent-ink:#0A5F63;
+    --pos:#0E7C6B; --pos-bg:#DEF1EC;
+    --font:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0A1015; --sheet:#101A22; --panel:#16232D; --panel-2:#1B2A35;
+      --ink:#E7EEF4; --ink-2:#A9B9C6; --muted:#7B8C9A; --border:#243743; --hair:#1D2C37;
+      --accent:#28BEBB; --accent-ink:#7FE0DC;
+      --pos:#48C9A9; --pos-bg:#122C26;
+    }
+  }
+  :root[data-theme="light"]{
+    --bg:#F5F8FA; --sheet:#FFFFFF; --panel:#EDF3F7; --panel-2:#E4EDF3;
+    --ink:#132330; --ink-2:#41586B; --muted:#6C7E8D; --border:#D5E0E8; --hair:#E4ECF2;
+    --accent:#0C8A8F; --accent-ink:#0A5F63; --pos:#0E7C6B; --pos-bg:#DEF1EC;
+  }
+  :root[data-theme="dark"]{
+    --bg:#0A1015; --sheet:#101A22; --panel:#16232D; --panel-2:#1B2A35;
+    --ink:#E7EEF4; --ink-2:#A9B9C6; --muted:#7B8C9A; --border:#243743; --hair:#1D2C37;
+    --accent:#28BEBB; --accent-ink:#7FE0DC; --pos:#48C9A9; --pos-bg:#122C26;
+  }
+
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font);
+    font-size:15.5px;line-height:1.62;-webkit-font-smoothing:antialiased}
+  .sheet{max-width:900px;margin:24px auto;background:var(--sheet);
+    border:1px solid var(--border);border-radius:12px;padding:38px clamp(20px,5vw,50px) 44px;
+    box-shadow:0 1px 3px rgba(20,40,60,.06),0 14px 40px rgba(20,40,60,.05)}
+
+  h1{margin:0;font-size:clamp(24px,4vw,30px);letter-spacing:-.015em;line-height:1.15;text-wrap:balance}
+  .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--accent-ink);margin-bottom:10px}
+  .lede{color:var(--ink-2);font-size:16.5px;margin:14px 0 0;max-width:62ch}
+  .num{font-variant-numeric:tabular-nums;font-family:var(--mono)}
+  code{font-family:var(--mono);font-size:.86em;background:var(--panel);
+    border:1px solid var(--hair);border-radius:4px;padding:1px 5px;color:var(--ink)}
+  strong{font-weight:640;color:var(--ink)}
+
+  /* one-liner banner */
+  .oneliner{margin:22px 0 4px;background:var(--panel);border:1px solid var(--hair);
+    border-left:3px solid var(--accent);border-radius:8px;padding:13px 18px}
+  .oneliner .k{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;
+    text-transform:uppercase;color:var(--accent-ink)}
+  .oneliner p{margin:5px 0 0;font-size:15px;color:var(--ink)}
+
+  .meta{display:flex;flex-wrap:wrap;gap:6px 22px;margin-top:16px;
+    font-family:var(--mono);font-size:11.5px;color:var(--muted)}
+  .meta b{color:var(--ink-2);font-weight:600}
+  .meta a{color:var(--accent-ink);text-decoration:none;border-bottom:1px solid var(--hair)}
+
+  h2.sec{font-size:12px;font-family:var(--mono);letter-spacing:.13em;text-transform:uppercase;
+    color:var(--ink-2);margin:40px 0 4px;padding-bottom:7px;border-bottom:1px solid var(--hair);
+    display:flex;align-items:baseline;gap:11px}
+  h2.sec .n{color:var(--accent);font-weight:700}
+  h3.sub{font-size:16px;color:var(--ink);margin:22px 0 6px;
+    display:flex;align-items:center;gap:9px}
+  h3.sub::before{content:"";width:7px;height:7px;background:var(--accent);border-radius:2px;
+    transform:rotate(45deg);flex:none}
+  p{margin:9px 0}
+  p.lead{color:var(--ink-2)}
+
+  .callout{background:var(--panel);border:1px solid var(--hair);border-radius:8px;
+    padding:13px 16px;border-left:3px solid var(--accent);margin:14px 0}
+  .callout .k{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--accent-ink)}
+  .callout p{margin:6px 0 0;color:var(--ink-2)}
+
+  /* ordered loop */
+  ol.loop{counter-reset:s;list-style:none;margin:10px 0 0;padding:0;
+    display:grid;grid-template-columns:1fr 1fr;gap:7px 22px}
+  ol.loop li{counter-increment:s;position:relative;padding:4px 0 4px 28px;
+    font-size:13.5px;color:var(--ink-2)}
+  ol.loop li::before{content:counter(s);position:absolute;left:0;top:3px;
+    font-family:var(--mono);font-size:10px;font-weight:700;color:var(--accent-ink);
+    background:var(--panel);border:1px solid var(--hair);border-radius:5px;width:18px;height:18px;
+    display:flex;align-items:center;justify-content:center}
+  ol.loop b{color:var(--ink)}
+
+  /* tables */
+  .wrap{overflow-x:auto;margin:12px 0}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;min-width:420px}
+  th{font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;
+    color:var(--muted);text-align:left;font-weight:600;padding:0 10px 7px;
+    border-bottom:1px solid var(--border)}
+  td{padding:8px 10px;border-bottom:1px solid var(--hair);color:var(--ink-2);vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  td.nm{color:var(--ink);font-weight:600}
+  td.r,th.r{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
+  tfoot td{font-family:var(--mono);font-weight:700;color:var(--ink);
+    border-top:1px solid var(--border);padding-top:8px}
+  .axis{display:inline-block;font-family:var(--mono);font-size:9.5px;padding:1px 7px;border-radius:4px;
+    background:var(--panel);border:1px solid var(--hair);color:var(--accent-ink)}
+
+  ul.ground{margin:8px 0 0;padding-left:0;list-style:none;
+    display:flex;flex-direction:column;gap:9px}
+  ul.ground li{position:relative;padding-left:22px;font-size:14.5px;color:var(--ink-2)}
+  ul.ground li::before{content:"";position:absolute;left:2px;top:8px;width:7px;height:7px;
+    border-radius:50%;background:var(--accent);opacity:.55}
+  ul.ground b{color:var(--ink)}
+
+  .formula{background:var(--panel);border:1px solid var(--hair);border-radius:8px;
+    padding:14px 16px;margin:12px 0;font-family:var(--mono);font-size:12.5px;
+    color:var(--ink);line-height:1.9;overflow-x:auto}
+  .formula .c{color:var(--muted)} .formula .hl{color:var(--accent-ink);font-weight:700}
+
+  /* figures */
+  figure{margin:18px 0 4px;background:var(--panel-2);border:1px solid var(--hair);
+    border-radius:10px;padding:16px 18px 10px}
+  figure svg{display:block;width:100%;height:auto}
+  figcaption{font-size:12.5px;color:var(--muted);margin-top:9px;padding-top:9px;
+    border-top:1px solid var(--hair);line-height:1.6}
+  figcaption b{color:var(--ink-2)}
+  .svg-box{fill:var(--panel);stroke:var(--border);stroke-width:1.2}
+  .svg-acc{fill:var(--panel-2);stroke:var(--accent);stroke-width:1.5}
+  .svg-pill{fill:var(--sheet);stroke:var(--border);stroke-width:1.1}
+  .svg-t{fill:var(--ink);font-family:var(--font);font-size:12px;font-weight:600}
+  .svg-t2{fill:var(--ink);font-family:var(--font);font-size:11px;font-weight:600}
+  .svg-s{fill:var(--muted);font-family:var(--mono);font-size:9px}
+  .svg-lbl{fill:var(--accent-ink);font-family:var(--mono);font-size:8.5px;font-weight:600}
+  .svg-hd{fill:var(--ink);font-family:var(--mono);font-size:10.5px;font-weight:700}
+  .svg-life{stroke:var(--border);stroke-width:1;stroke-dasharray:3 4}
+  .svg-a{stroke:var(--ink-2);stroke-width:1.4;fill:none}
+  .svg-ad{stroke:var(--accent);stroke-width:1.3;fill:none;stroke-dasharray:4 3}
+
+  .foot{margin-top:30px;padding-top:14px;border-top:1px solid var(--hair);
+    font-family:var(--mono);font-size:10.5px;color:var(--muted);line-height:1.8}
+
+  @media (max-width:640px){
+    ol.loop{grid-template-columns:1fr}
+  }
+</style>
+
+<div class="sheet">
+
+  <div class="eyebrow">Methods &amp; Implementation · plain-language</div>
+  <h1>How It Works</h1>
+  <p class="lede">A big AI model, run faster — and measured carefully. Here is the machine that does the work, the test data behind it, and how each result is computed.</p>
+
+  <div class="oneliner">
+    <div class="k">In one line</div>
+    <p>We built a fast, exact way to run a big language model, and a careful way to measure it. <strong>Every number in our reports comes from a script reading saved data files — never typed by hand.</strong></p>
+  </div>
+
+  <div class="meta">
+    <span><b>Date</b> 2026-07-13</span>
+    <span><b>Engine</b> exact greedy</span>
+    <span><b>Models</b> Qwen &amp; Llama</span>
+    <span><b>Companion</b> Progress Debrief</span>
+  </div>
+
+  <!-- ============ THE BIG IDEA ============ -->
+  <h2 class="sec"><span class="n">◆</span> First, the big idea</h2>
+  <p class="lead">Big AI models are slow because they write <strong>one word at a time</strong>. Each word needs a full pass through the model.</p>
+  <p class="lead"><strong>Speculative decoding</strong> is a trick to go faster. It uses two models:</p>
+  <ul class="ground">
+    <li>A <b>small, fast model</b> (the "draft") guesses the next few words.</li>
+    <li>A <b>big, accurate model</b> (the "target") checks all those guesses <b>at once</b>, in a single pass.</li>
+  </ul>
+  <p class="lead">Right guesses are kept for free — several words for the price of one big check. Wrong guesses are thrown away. The key promise: <strong>the final text is exactly what the big model would have written alone.</strong> We never trade quality for speed.</p>
+  <p class="lead">Two words we use a lot:</p>
+  <ul class="ground">
+    <li><b>Accept</b> — the big model agrees with a guess, so we keep it.</li>
+    <li><b>Draft length (L)</b> — how many words the small model guesses before we check. Too few wastes the big model's parallel check; too many wastes the small model's time on words that get thrown out.</li>
+  </ul>
+
+  <!-- ============ A. THE ENGINE ============ -->
+  <h2 class="sec"><span class="n">A</span> The engine (the machine that does the work)</h2>
+  <p class="lead">Our engine is <strong>exact and lossless</strong>: the words it produces are identical to what the big model would produce alone. We treat the big model's top pick as the correct answer, always. We keep two jobs separate on purpose (rule D021): a <b>hookable path</b> that's easy to inspect (used for all science), and a <b>fast path</b> used only for timing (it never touches the science path).</p>
+
+  <h3 class="sub">The parts of the engine</h3>
+  <div class="wrap">
+  <table>
+    <thead><tr><th style="width:26%">Part</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td class="nm">Target (big, 7B)</td><td>The judge. One pass per round; checks all the guesses. Its top pick is the "correct" answer. <span class="num">Qwen2.5-7B-Instruct</span>, fixed version, <code>bf16</code>.</td></tr>
+      <tr><td class="nm">Draft (small, 0.5B)</td><td>The guesser. Proposes up to L words, one at a time. Shares the big model's vocabulary.</td></tr>
+      <tr><td class="nm">Verify + commit</td><td>The referee. Keeps the longest run of guesses that match the big model, then adds one guaranteed-correct word. Plain code, tested on a normal CPU.</td></tr>
+      <tr><td class="nm">Memory caches (KV)</td><td>Both models remember what they've read, so they don't redo work. After each round, memory is trimmed to exactly what was accepted.</td></tr>
+      <tr><td class="nm">Signal recorder</td><td>Notes how unsure the small model was for every guess (its "entropy" and "margin"). This is what the smart controller reads later.</td></tr>
+      <tr><td class="nm">Controller</td><td>The decision-maker. Before each round it picks L from the menu <code>{0,1,2,3,4,6,8}</code>. (0 means "skip guessing this round.")</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3 class="sub">One round, step by step</h3>
+  <ol class="loop">
+    <li><b>Pick a length.</b> The controller chooses L.</li>
+    <li><b>Guess.</b> The small model proposes up to L words and records its confidence.</li>
+    <li><b>Check.</b> The big model does one pass over all the guesses.</li>
+    <li><b>Commit.</b> Keep the matching guesses plus one correct word.</li>
+    <li><b>Trim memory.</b> Roll both caches back to what was accepted.</li>
+    <li><b>Stop?</b> Halt at the end-of-text signal or the length limit.</li>
+    <li><b>Record.</b> Save a fresh confidence signal for the next round.</li>
+    <li><b>Log.</b> Write everything down and repeat.</li>
+  </ol>
+
+  <div class="callout">
+    <div class="k">The clever trick that saves us money</div>
+    <p>Every round we record whether <b>each</b> guess matched, at every position — even past where guessing stopped. We call this the <b>match vector</b>. With that full record, we can ask "what would a <b>different</b> draft length have done?" <b>without re-running any model</b>. One expensive run (guessing 8 words each time) scores <b>every</b> possible length setting for free, just by reading the saved file. So all our later analysis is replaying saved data, not paying for new GPU runs.</p>
+  </div>
+
+  <div class="callout">
+    <div class="k">How we know it's correct</div>
+    <p>A test checks the engine's output word-for-word against the big model alone — it must match every time. In full-precision math the two agree to about 1 part in 10 million. On the Llama model pair, this check <b>passed 118 out of 118 times</b>. The fast (timing-only) path must re-pass this same check before any of its numbers count.</p>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 900 340" role="img" aria-label="One speculative-decoding round">
+      <defs>
+        <marker id="ah1" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="var(--ink-2)"/></marker>
+        <marker id="ahd1" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="var(--accent)"/></marker>
+      </defs>
+      <rect class="svg-acc" x="20" y="138" width="150" height="64" rx="9"/>
+      <text class="svg-t" x="95" y="163" text-anchor="middle">Controller</text>
+      <text class="svg-s" x="95" y="180" text-anchor="middle">pick L in {0,1,2,3,4,6,8}</text>
+      <rect class="svg-box" x="220" y="36" width="170" height="66" rx="9"/>
+      <text class="svg-t" x="305" y="60" text-anchor="middle">Draft · small 0.5B</text>
+      <text class="svg-s" x="305" y="76" text-anchor="middle">guess d1..dL (one at a time)</text>
+      <text class="svg-s" x="305" y="90" text-anchor="middle">+ record how unsure</text>
+      <rect class="svg-box" x="220" y="238" width="170" height="66" rx="9"/>
+      <text class="svg-t" x="305" y="262" text-anchor="middle">Target · big 7B</text>
+      <text class="svg-s" x="305" y="278" text-anchor="middle">1 pass, checks all guesses</text>
+      <text class="svg-s" x="305" y="292" text-anchor="middle">top pick t1..t(L+1)</text>
+      <rect class="svg-acc" x="452" y="136" width="176" height="68" rx="9"/>
+      <text class="svg-t" x="540" y="162" text-anchor="middle">Verify + Commit</text>
+      <text class="svg-s" x="540" y="179" text-anchor="middle">keep matching prefix</text>
+      <text class="svg-s" x="540" y="192" text-anchor="middle">add 1 correct word · trim memory</text>
+      <rect class="svg-pill" x="700" y="142" width="176" height="56" rx="9"/>
+      <text class="svg-t2" x="788" y="165" text-anchor="middle">Words kept</text>
+      <text class="svg-s" x="788" y="181" text-anchor="middle">= big model alone (exact)</text>
+      <rect class="svg-box" x="452" y="250" width="280" height="56" rx="9"/>
+      <text class="svg-t2" x="592" y="273" text-anchor="middle">Recorder</text>
+      <text class="svg-s" x="592" y="290" text-anchor="middle">match vector · confidence · timing</text>
+
+      <path class="svg-a" d="M170,158 L195,158 L195,69 L218,69" marker-end="url(#ah1)"/>
+      <text class="svg-lbl" x="200" y="112">L</text>
+      <path class="svg-a" d="M390,69 L422,69 L422,158 L450,158" marker-end="url(#ah1)"/>
+      <text class="svg-lbl" x="398" y="60">guesses d1..dL</text>
+      <path class="svg-a" d="M390,271 L422,271 L422,182 L450,182" marker-end="url(#ah1)"/>
+      <text class="svg-lbl" x="398" y="290">top pick t1..t(L+1)</text>
+      <path class="svg-a" d="M628,170 L698,170" marker-end="url(#ah1)"/>
+      <text class="svg-lbl" x="632" y="162">keep + one correct word</text>
+      <path class="svg-a" d="M540,204 L540,248" marker-end="url(#ah1)"/>
+      <text class="svg-lbl" x="546" y="228">match vector</text>
+      <path class="svg-ad" d="M452,290 L95,290 L95,204" marker-end="url(#ahd1)"/>
+      <text class="svg-lbl" x="150" y="304">next round: a cheap confidence hint</text>
+    </svg>
+    <figcaption><b>Figure A — one round.</b> Solid arrows show data moving inside a round; the dashed arrow is a cheap hint passed to the controller for the next round. The small model's cost depends on its <b>number of layers</b>, not its size — which is why a 14×-smaller draft isn't 14× faster on our research setup.</figcaption>
+  </figure>
+
+  <!-- ============ B. TEST DATA ============ -->
+  <h2 class="sec"><span class="n">B</span> The test data (and how we collected it)</h2>
+  <p class="lead">Because our engine is exact, whether a word gets accepted depends only on the two models and the text so far — nothing random. So the <strong>variety of our test prompts is the single most important choice</strong> (rule D022). Version 2 covers <strong>7 kinds of task</strong> from <strong>9 public sources</strong>.</p>
+
+  <div class="wrap">
+  <table>
+    <thead><tr><th>Source</th><th>Task type</th><th>License</th><th class="r">Prompts</th></tr></thead>
+    <tbody>
+      <tr><td class="nm">HumanEval</td><td><span class="axis">code</span></td><td>MIT</td><td class="r">164</td></tr>
+      <tr><td class="nm">MBPP (sanitized)</td><td><span class="axis">code</span></td><td>CC-BY-4.0</td><td class="r">200</td></tr>
+      <tr><td class="nm">GSM8K</td><td><span class="axis">math</span></td><td>MIT</td><td class="r">200</td></tr>
+      <tr><td class="nm">MT-Bench</td><td><span class="axis">chat</span></td><td>Apache-2.0</td><td class="r">80</td></tr>
+      <tr><td class="nm">OASST1</td><td><span class="axis">chat</span></td><td>Apache-2.0</td><td class="r">150</td></tr>
+      <tr><td class="nm">WMT14 de-en</td><td><span class="axis">translation</span></td><td>shared-task</td><td class="r">150</td></tr>
+      <tr><td class="nm">Natural Questions Open</td><td><span class="axis">Q&amp;A / retrieval</span></td><td>CC-BY-SA-3.0</td><td class="r">200</td></tr>
+      <tr><td class="nm">JSONSchemaBench</td><td><span class="axis">structured</span></td><td>MIT</td><td class="r">150</td></tr>
+      <tr><td class="nm">CNN / DailyMail</td><td><span class="axis">summaries</span></td><td>Apache-2.0; IDs only</td><td class="r">200</td></tr>
+    </tbody>
+    <tfoot><tr><td colspan="3">9 sources · 7 task types · split by whole prompt</td><td class="r">1,494</td></tr></tfoot>
+  </table>
+  </div>
+
+  <h3 class="sub">Three ground rules</h3>
+  <ul class="ground">
+    <li><b>How we split the data.</b> We divide prompts into a "practice" set and a "final exam" set <b>by whole prompt</b>, before any tuning, then freeze the split. We never split in the middle of one prompt — that would let answers leak from practice into the exam.</li>
+    <li><b>Where each row came from.</b> Every item carries its license and a source ID. For copyright-sensitive sources, we ship only the row ID plus our own model's output — not the original text.</li>
+    <li><b>Versioning.</b> Version 2 lives in its own folder, so all the older version-1 results stay valid and untouched.</li>
+  </ul>
+
+  <figure>
+    <svg viewBox="0 0 900 210" role="img" aria-label="How the test data is collected">
+      <defs><marker id="ah2" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="var(--ink-2)"/></marker></defs>
+      <rect class="svg-box" x="16" y="74" width="120" height="66" rx="9"/>
+      <text class="svg-t2" x="76" y="100" text-anchor="middle">9 sources</text>
+      <text class="svg-s" x="76" y="116" text-anchor="middle">7 types / 1,494</text>
+      <rect class="svg-box" x="176" y="78" width="132" height="58" rx="9"/>
+      <text class="svg-t2" x="242" y="102" text-anchor="middle">Clean up +</text>
+      <text class="svg-t2" x="242" y="116" text-anchor="middle">tag licenses</text>
+      <rect class="svg-box" x="348" y="78" width="132" height="58" rx="9"/>
+      <text class="svg-t2" x="414" y="102" text-anchor="middle">Remove</text>
+      <text class="svg-t2" x="414" y="116" text-anchor="middle">duplicates</text>
+      <rect class="svg-acc" x="520" y="78" width="144" height="58" rx="9"/>
+      <text class="svg-t2" x="592" y="100" text-anchor="middle">Split by prompt</text>
+      <text class="svg-s" x="592" y="116" text-anchor="middle">then freeze</text>
+      <rect class="svg-pill" x="704" y="52" width="70" height="30" rx="7"/><text class="svg-s" x="739" y="71" text-anchor="middle" style="font-size:10px;fill:var(--ink)">practice</text>
+      <rect class="svg-pill" x="704" y="132" width="70" height="30" rx="7"/><text class="svg-s" x="739" y="151" text-anchor="middle" style="font-size:10px;fill:var(--ink)">exam</text>
+      <rect class="svg-box" x="810" y="78" width="76" height="58" rx="9"/>
+      <text class="svg-t2" x="848" y="102" text-anchor="middle">Sealed</text>
+      <text class="svg-s" x="848" y="118" text-anchor="middle">data files</text>
+      <path class="svg-a" d="M136,107 L174,107" marker-end="url(#ah2)"/>
+      <path class="svg-a" d="M308,107 L346,107" marker-end="url(#ah2)"/>
+      <path class="svg-a" d="M480,107 L518,107" marker-end="url(#ah2)"/>
+      <path class="svg-a" d="M664,100 L704,67" marker-end="url(#ah2)"/>
+      <path class="svg-a" d="M664,114 L704,147" marker-end="url(#ah2)"/>
+      <path class="svg-a" d="M774,67 L848,67 L848,76" marker-end="url(#ah2)"/>
+      <path class="svg-a" d="M774,147 L848,147 L848,138" marker-end="url(#ah2)"/>
+    </svg>
+    <figcaption><b>Figure B — the pipeline.</b> Sources become clean, split, sealed data files. Those files are the one and only input to every result. Nothing is recomputed by hand.</figcaption>
+  </figure>
+
+  <!-- ============ C. HOW WE ANSWER ============ -->
+  <h2 class="sec"><span class="n">C</span> How we answer each question</h2>
+  <p class="lead">All three questions are answered <strong>offline</strong> — by replaying the sealed data. Thanks to the match-vector trick, one saved run per prompt tells us the answer for every draft length, every small model, and the acceptance atlas. No new GPU runs needed.</p>
+
+  <h3 class="sub">The score we use (and how sure we are)</h3>
+  <p class="lead">We measure <strong>efficiency</strong>: useful words produced, divided by the work spent. We price a small-model guess at one-tenth the cost of a big-model check (a realistic serving assumption).</p>
+  <div class="formula">
+    <span class="hl">efficiency</span> = (total words kept) / (total cost)<br>
+    <span class="c">&nbsp;&nbsp;&nbsp;cost of a round with length L = 1 + 0.1 × L</span><br>
+    <span class="c">&nbsp;&nbsp;&nbsp;words kept = matching guesses + 1 free correct word</span>
+  </div>
+  <p class="lead">To know how confident we are, we use a <b>prompt-grouped bootstrap</b>: resample whole prompts 2,000 times, report the middle 95% range, plus the chance the true gain is zero or negative.</p>
+
+  <figure>
+    <svg viewBox="0 0 900 360" role="img" aria-label="One round, and how the saved data is reused">
+      <defs><marker id="ah3" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="var(--ink-2)"/></marker>
+        <marker id="ahd3" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="var(--accent)"/></marker></defs>
+      <g>
+        <rect class="svg-acc" x="24" y="16" width="130" height="30" rx="7"/><text class="svg-hd" x="89" y="35" text-anchor="middle">Controller</text>
+        <rect class="svg-box" x="214" y="16" width="120" height="30" rx="7"/><text class="svg-hd" x="274" y="35" text-anchor="middle">Draft 0.5B</text>
+        <rect class="svg-box" x="404" y="16" width="120" height="30" rx="7"/><text class="svg-hd" x="464" y="35" text-anchor="middle">Target 7B</text>
+        <rect class="svg-acc" x="590" y="16" width="130" height="30" rx="7"/><text class="svg-hd" x="655" y="35" text-anchor="middle">Verify+Commit</text>
+        <rect class="svg-box" x="778" y="16" width="104" height="30" rx="7"/><text class="svg-hd" x="830" y="35" text-anchor="middle">Recorder</text>
+      </g>
+      <line class="svg-life" x1="89" y1="46" x2="89" y2="312"/>
+      <line class="svg-life" x1="274" y1="46" x2="274" y2="312"/>
+      <line class="svg-life" x1="464" y1="46" x2="464" y2="312"/>
+      <line class="svg-life" x1="655" y1="46" x2="655" y2="312"/>
+      <line class="svg-life" x1="830" y1="46" x2="830" y2="312"/>
+      <path class="svg-a" d="M89,74 L272,74" marker-end="url(#ah3)"/><text class="svg-lbl" x="95" y="68">pick length L</text>
+      <path class="svg-a" d="M274,92 L344,92 L344,112 L276,112" marker-end="url(#ah3)"/><text class="svg-lbl" x="350" y="99">guess d1..dL</text><text class="svg-lbl" x="350" y="111">(+ confidence)</text>
+      <path class="svg-a" d="M274,140 L653,140" marker-end="url(#ah3)"/><text class="svg-lbl" x="300" y="134">guesses d1..dL</text>
+      <path class="svg-a" d="M655,166 L466,166" marker-end="url(#ah3)"/><text class="svg-lbl" x="500" y="160">1 pass over the guesses</text>
+      <path class="svg-a" d="M464,192 L653,192" marker-end="url(#ah3)"/><text class="svg-lbl" x="490" y="186">top pick t1..t(L+1)</text>
+      <path class="svg-a" d="M655,210 L725,210 L725,230 L657,230" marker-end="url(#ah3)"/><text class="svg-lbl" x="731" y="217">keep prefix; add 1 word</text><text class="svg-lbl" x="731" y="229">trim memory</text>
+      <path class="svg-a" d="M655,258 L828,258" marker-end="url(#ah3)"/><text class="svg-lbl" x="662" y="252">match vector · timing</text>
+      <path class="svg-ad" d="M830,286 L89,286" marker-end="url(#ahd3)"/><text class="svg-lbl" x="300" y="280">confidence hint → next round</text>
+      <rect x="24" y="322" width="858" height="30" rx="7" fill="var(--panel)" stroke="var(--hair)"/>
+      <text class="svg-s" x="453" y="341" text-anchor="middle" style="font-size:10px;fill:var(--ink)">Offline: ONE saved run answers every question — draft length · draft routing · the acceptance atlas</text>
+    </svg>
+    <figcaption><b>Figure C — one round, then the payoff.</b> The top is a single round. The bottom band is the reward: because we saved the full match vector, one run answers <b>all</b> downstream questions cheaply.</figcaption>
+  </figure>
+
+  <h3 class="sub">The three questions</h3>
+  <div class="wrap">
+  <table>
+    <thead><tr><th style="width:22%">Question</th><th>How we compute it</th></tr></thead>
+    <tbody>
+      <tr><td class="nm">RQ2 · draft length</td><td>Replay each length rule on the saved match vectors. Compare our smart "entropy-stop" rule (tuned on practice, frozen for the exam) against the best fixed length.</td></tr>
+      <tr><td class="nm">RQ3 · draft routing</td><td>Score each candidate small model against the <b>same</b> big-model output, per task type. Use paired, same-size comparisons. The "oracle router" always picks the best model for each task.</td></tr>
+      <tr><td class="nm">RQ1 · joint</td><td>Combine the length controller with the routing oracle. Since routing added nothing, the joint answer just equals the length controller — RQ1 reduces to RQ2 for this model pair.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="foot">
+    Naming: we say "representation" / "diagnostic signal" (not "mechanism") until deeper tests pass, and refer to timeframes by date only. Length menu {0,1,2,3,4,6,8}; 0 = no guessing. Results from sealed runs sweep-2026-07-11T203836 (Qwen) and sweep-llama-f8-2026-07-13 (Llama). Companion document: Progress Debrief.
+  </div>
+
+</div>

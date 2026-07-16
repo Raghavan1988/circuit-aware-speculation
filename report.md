@@ -7,6 +7,16 @@
 
 ---
 
+## TL;DR — the answers
+
+- ✅ **Guessing a smart number of words works.** A simple, free rule beats the best fixed number by **+11.2%** and cuts wasted guessing by **62%**.
+- ❌ **Specialist small models don't help.** A general-purpose model of the same size ties or beats them — even on the specialist's own topic.
+- ➡️ **So the "combine both" question shrinks** down to just the first idea (smart word count).
+- 📊 **The supporting findings hold up.** Some kinds of words are much easier to guess than others (we mapped this — the "atlas"); cheap signals predict success just as well as digging into the model's internals; and our research setup makes the small model look slower than it really is, so we hold off on any raw speed claim.
+- 🗂️ **We built a better test set.** Version 2: 1,494 prompts, 7 task types, 9 datasets, all license-checked. A repeat of the specialist test on it is running now.
+
+---
+
 ## First, the idea in plain English
 
 Big AI models are slow because they write **one word at a time**. Each word takes a full pass through the model.
@@ -23,16 +33,6 @@ Our study asked three questions:
 - Can we pick a smart number of words to guess each time, instead of a fixed number?
 - Does swapping in a "specialist" small model for each topic (code, math, etc.) help?
 - If we combine both ideas, do we win even more?
-
----
-
-## TL;DR — the answers
-
-- ✅ **Guessing a smart number of words works.** A simple, free rule beats the best fixed number by **+11.2%** and cuts wasted guessing by **62%**.
-- ❌ **Specialist small models don't help.** A general-purpose model of the same size ties or beats them — even on the specialist's own topic.
-- ➡️ **So the "combine both" question shrinks** down to just the first idea (smart word count).
-- 📊 **The supporting findings hold up.** Some kinds of words are much easier to guess than others (we mapped this — the "atlas"); cheap signals predict success just as well as digging into the model's internals; and our research setup makes the small model look slower than it really is, so we hold off on any raw speed claim.
-- 🗂️ **We built a better test set.** Version 2: 1,494 prompts, 7 task types, 9 datasets, all license-checked. A repeat of the specialist test on it is running now.
 
 ---
 
