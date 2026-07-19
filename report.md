@@ -102,7 +102,8 @@ We scored five small models across four topics, each on the same big-model outpu
 
 **Why:** acceptance is about how well the small model matches the *big model's own style*. A same-family general model matches a general big model better than a narrow expert does. **Bigger helps; specializing doesn't.** A repeat on the bigger version-2 set is running now.
 
-### 3.3 The "atlas": some words are far easier to guess *(headline positive finding)*
+### 3.3 The "atlas": some words are far easier to guess 
+This is a positive finding.
 
 How often a guess is accepted ranges from **0.52 to 0.88**, depending on the *kind* of word. We measured this over 302,464 words.
 
