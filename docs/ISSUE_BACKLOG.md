@@ -18,7 +18,7 @@ Statuses are `OPEN`, `IN_PROGRESS`, `BLOCKED`, and `DONE`. Before starting, add 
 | I10 | DONE | Claude | Add selected-layer activation capture | I03,I06 | I11 | A100/H100 |
 | I11 | DONE | Grok | Build and validate token-category annotation | I05,I06 | I10 | CPU |
 | I12 | DONE | Claude | Train leakage-safe layerwise acceptance probes | I10,I11 | — | GPU/CPU |
-| I13 | OPEN | — | Evaluate calibration and incremental information | I07,I08,I09,I12 | — | CPU |
+| I13 | IN_PROGRESS | Claude | Evaluate calibration and incremental information | I07,I08,I09,I12 | I23 | CPU |
 | I14 | OPEN | — | Implement compute-optimal selective speculation | I07,I13 | — | GPU |
 | I15 | OPEN | — | Run rejection-direction interventions and controls | I12 | I14 | A100/H100 |
 | I16 | OPEN | — | Run domain- and traffic-shift experiments | I14 | I15,I17 | A100/H100 |
@@ -28,7 +28,7 @@ Statuses are `OPEN`, `IN_PROGRESS`, `BLOCKED`, and `DONE`. Before starting, add 
 | I20 | OPEN | — | Run clean reproduction and evidence audit | I19 | — | GPU/CPU |
 | I21 | DONE | Grok | Verify landscape additions; maintain living comparison table | — | I01,I05 | CPU |
 | I22 | OPEN | — | Reproduce SpecDec++-style learned acceptance-head baseline | I03,I06,I10 | I08,I09 | GPU |
-| I23 | OPEN | — | Pre-round acceptance prediction from cached representations | I10,I12 | I13,I14 | GPU |
+| I23 | IN_PROGRESS | Claude | Pre-round acceptance prediction from cached representations | I10,I12 | I13,I14 | GPU |
 | I24 | OPEN | — | Staged release package (benchmark, recipes, integration adapter) | I18,I20 | — | GPU/CPU |
 
 ## Build status (2026-07-10, Claude)
@@ -109,6 +109,24 @@ until the GPU gate passes; no results exist yet. Run order on Modal:
   updated with the three narrowing papers. PLAN.md edits proposed as notes
   only (Claude owns PLAN.md). Did not touch Claude engine/trace/analysis
   code or Codex policy modules.
+
+## Build status (2026-07-19, Claude — I13/I23 generator-critic substrate)
+
+- **I13 + I23 claimed IN_PROGRESS.** Execution method: the generator-critic
+  autoresearch loop (`docs/generator_critic.md`, ratified as D023). Load-bearing
+  finding: I10's `capture_activations` records only the DRAFT residual stream at
+  proposal-generating positions (the within-round signal); the pre-round headline
+  (C10/I23) needs the TARGET verified-context FRONTIER representation, which was
+  not captured. Substrate under construction:
+  - `src/cas/autoresearch/types.py` — shared contract (`FeatureSpec`, seed
+    families, frontier artifact layout, frozen `preround_hardened` bar). DONE.
+  - Step 1 `capture_frontier_activations` (Modal, target frontier capture);
+    Step 2 `features.py` (seed-library transforms); Step 3 `eval.py` (incremental
+    lift + equal-capacity controls + regret); Step 4 `cost.py` (deployed-cost
+    probe); Step 5 `.claude/workflows/generator_critic.js` (orchestration).
+  - Frozen bar = `preround_hardened` (~0.73 AUROC); every candidate must beat it
+    AND norm-matched + random controls under prompt-grouped GroupKFold OOF,
+    dev-only. "Circuit"/"mechanism" language stays G2-gated (D020).
 
 ## Acceptance criteria and artifacts
 
