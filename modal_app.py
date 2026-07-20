@@ -1279,6 +1279,133 @@ def capture(run_id: str = "sweep-2026-07-11T203836", cap_prompts: int = 120):
     capture_activations.remote(run_id, cap_prompts=cap_prompts)
 
 
+@app.function(image=image, gpu=GPU, volumes=VOLUMES, timeout=6 * 3600)
+def capture_frontier_activations(run_id: str = "sweep-2026-07-11T203836",
+                                 cap_prompts: int = 120, split: str = "dev") -> dict:
+    """I23/C10 (D023): teacher-forced TARGET residual-stream capture at the
+    verified-context FRONTIER (last-committed) position that exists BEFORE each
+    decode round drafts, labelled by that round's OWN realized acceptance. A probe
+    on this "already cached" frontier rep answers: can we predict a round's
+    acceptance before spending any draft compute?
+
+    Mirrors capture_activations exactly for prefix reconstruction and volume IO,
+    but (a) reads pair.target (not the draft), (b) reads the frontier position
+    len(prefix)-1 (not the proposal-generating positions), and (c) labels from
+    round r's accepted_prefix_len (not the sealed per-proposal target_match).
+
+    Eager attention (D014/D015) keeps this the hookable path; the residual stream
+    is read via output_hidden_states (numerically the real model).
+    """
+    import json
+    import os
+
+    import numpy as np
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    import torch
+
+    from cas.annotate.phases import annotate_phase
+    from cas.autoresearch.types import (
+        FRONTIER_META_COLS, FRONTIER_SUBDIR, frontier_acts_filename)
+    from cas.capture import DEFAULT_LAYERS, frontier_position
+    from cas.config import EngineConfig
+    from cas.models import load_pair
+
+    torch.set_grad_enabled(False)
+    cfg = EngineConfig()
+    pair = load_pair(cfg)
+    target, tok, dev = pair.target, pair.tokenizer, pair.device
+
+    base = f"/artifacts/traces/{run_id}"
+    rounds = pq.read_table(f"{base}/fixed_8/rounds.parquet").to_pylist()
+    summ = pq.read_table(f"{base}/fixed_8/request_summaries.parquet").to_pylist()
+    with open("/artifacts/data/split_manifest.json") as f:
+        assignment = json.load(f)["assignment"]          # prompt_hash -> split
+    split_of = {s["request_id"]: assignment.get(s["prompt_hash"], "unknown")
+                for s in summ}
+    domain_of = {s["request_id"]: s["domain"] for s in summ}
+    with open("/artifacts/data/prompts.jsonl") as f:
+        prompt_text = {json.loads(l)["prompt_id"]: json.loads(l)["prompt_text"]
+                       for l in (ln for ln in f)}
+
+    by_req: dict = {}
+    for r in rounds:
+        by_req.setdefault(r["request_id"], []).append(r)
+    reqs = [rid for rid in by_req
+            if split_of.get(rid) == split and rid in prompt_text]
+    reqs.sort()
+    reqs = reqs[:cap_prompts]
+
+    acts = {L: [] for L in DEFAULT_LAYERS}
+    meta = []
+    n_rows = 0
+    for j, rid in enumerate(reqs):
+        prompt_ids = tok(prompt_text[rid])["input_ids"]
+        # Same prefill-token reconstruction as capture_activations: the engine
+        # commits one target greedy argmax token after the prompt BEFORE round 0,
+        # so generated[0] is that token and round 0 has start_output_pos == 1.
+        t_ids = torch.tensor([prompt_ids], device=dev)
+        first_tok = int(pair.target(input_ids=t_ids, use_cache=False).logits[0, -1].argmax())
+        prefix_ids = list(prompt_ids) + [first_tok]  # grows by each round's emissions
+        for r in sorted(by_req[rid], key=lambda x: x["round_id"]):
+            if r["start_output_pos"] != len(prefix_ids) - len(prompt_ids):
+                raise ValueError(f"{rid} r{r['round_id']} emit/pos mismatch "
+                                 f"({r['start_output_pos']} vs {len(prefix_ids) - len(prompt_ids)})")
+            proposals = list(r["proposed_token_ids"] or ())
+            emitted = list(r["emitted_token_ids"] or ())
+            if not proposals:
+                prefix_ids += emitted        # skip: no draft this round to predict
+                continue
+            # BEFORE appending this round's emissions, prefix_ids IS the verified
+            # context that exists before round r drafts. Teacher-force the TARGET
+            # over exactly this prefix and read the frontier (last-committed) row.
+            # A single forward over the FULL committed sequence would yield the
+            # identical vector at this position -- causal attention makes hidden
+            # state[p] a function of tokens 0..p only -- but we forward per round
+            # to mirror capture_activations and keep the alignment self-evident.
+            fpos = frontier_position(len(prefix_ids))     # == len(prefix_ids) - 1
+            ids = torch.tensor([prefix_ids], device=dev)
+            hs = target(input_ids=ids, output_hidden_states=True,
+                        use_cache=False).hidden_states
+            # Label from round r itself (its own realized acceptance).
+            accept = int(r["accepted_prefix_len"] >= 1)
+            accepted_len = int(r["accepted_prefix_len"])
+            for L in DEFAULT_LAYERS:
+                acts[L].append(hs[L][0, fpos].to(torch.float16).cpu().numpy())
+            # Dict keys in FRONTIER_META_COLS order (obeyed by from_pylist below).
+            meta.append({"request_id": rid, "round_id": r["round_id"],
+                         "split": split_of.get(rid, "unknown"),
+                         "domain": domain_of.get(rid, "unknown"),
+                         "phase": annotate_phase(r["start_output_pos"]),
+                         "accept": accept, "accepted_len": accepted_len})
+            n_rows += 1
+            prefix_ids += emitted  # advance committed prefix for the next round
+        if (j + 1) % 20 == 0:
+            print(f"{j+1}/{len(reqs)} prompts, {n_rows} frontier rows", flush=True)
+
+    outdir = f"/artifacts/probes/{run_id}/{FRONTIER_SUBDIR}"
+    os.makedirs(outdir, exist_ok=True)
+    for L in DEFAULT_LAYERS:
+        np.save(f"{outdir}/{frontier_acts_filename(L)}", np.stack(acts[L]))
+    meta_table = pa.Table.from_pylist(meta).select(list(FRONTIER_META_COLS))
+    pq.write_table(meta_table, f"{outdir}/frontier_metadata.parquet")
+    with open(f"{outdir}/frontier_capture_meta.json", "w") as f:
+        json.dump({"run_id": run_id, "split": split, "n_prompts": len(reqs),
+                   "n_rows": n_rows, "layers": list(DEFAULT_LAYERS),
+                   "d_model": int(acts[DEFAULT_LAYERS[0]][0].shape[0])}, f, indent=2)
+    artifacts.commit()
+    print(f"captured {n_rows} frontier rows x {len(DEFAULT_LAYERS)} layers; "
+          f"wrote {outdir}")
+    return {"n_rows": n_rows, "n_prompts": len(reqs),
+            "layers": list(DEFAULT_LAYERS)}
+
+
+@app.local_entrypoint()
+def capture_frontier(run_id: str = "sweep-2026-07-11T203836",
+                     cap_prompts: int = 120, split: str = "dev"):
+    capture_frontier_activations.remote(run_id, cap_prompts=cap_prompts, split=split)
+
+
 @app.function(image=image, volumes=VOLUMES, timeout=2 * 3600)  # CPU-only
 def fit_probes(run_id: str = "sweep-2026-07-11T203836",
                layers: str = "6,12,18,24", eval_split: str = "dev") -> dict:
