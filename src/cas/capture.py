@@ -32,6 +32,23 @@ def generating_positions(prefix_len: int, n_proposals: int) -> list[int]:
     return [prefix_len - 1 + i for i in range(n_proposals)]
 
 
+def frontier_position(prefix_len: int) -> int:
+    """Absolute index of the verified-context FRONTIER (last committed) position.
+
+    Given a committed prefix of length ``prefix_len`` (the tokens already emitted
+    and verified BEFORE a decode round drafts), the target residual stream at the
+    last-committed position -- index ``prefix_len - 1`` -- is the representation
+    that conditions the next drafted round. A probe on that vector predicts the
+    round's acceptance before any draft compute is spent (I23/C10). Torch-free so
+    the arithmetic stays unit-testable next to ``generating_positions``.
+
+    Raises ValueError if ``prefix_len < 1`` (no committed context to condition on).
+    """
+    if prefix_len < 1:
+        raise ValueError("prefix must be non-empty (need a committed frontier position)")
+    return prefix_len - 1
+
+
 def committed_prefixes(rounds: list[dict], prompt_len: int):
     """Yield (round, prefix_len) walking rounds in order, where prefix_len is
     prompt_len plus all tokens emitted by earlier rounds.
