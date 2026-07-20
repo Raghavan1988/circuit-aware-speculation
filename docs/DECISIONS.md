@@ -198,3 +198,48 @@ Use dated entries with context, decision, alternatives, and consequences. Do not
 - **Decision:** Adopt a versioned **Core v2 corpus** (~1,500 prompts, 8 axes): keep HumanEval/GSM8K/MT-Bench; add MBPP (code), OASST1 (chat, to the 150-target), WMT14 de-en (translation), Natural Questions Open (QA/RAG), JSONSchemaBench (structured/high-alpha); replace XSum-as-primary with CNN/DailyMail (Spec-Bench summarization slot), keeping XSum optional. Build into `/artifacts/data_v2/` so the sealed v1 corpus and every existing analysis stay valid. Provenance fields (`spdx`, `row_id`) and a `LICENSES.md` accompany it. Copyright-text datasets (CNN/DM, XSum) ship **row_id only** in any release; all reference completions are generated **in-house** with the Qwen pair (Apache-2.0), sidestepping output-license terms. A `spec_bench_comparable` subset is tagged for the exact Spec-Bench aggregate. Extended/Stretch tiers are added behind a caps flag.
 - **Alternatives:** Keep the 4-domain 644 (underpowers the mechanisms, narrow acceptance distribution); mirror Spec-Bench's 80/subtask slices as the whole corpus (too few for ±0.02 acceptance CIs — used only for the comparability number).
 - **Consequences:** `cas.data.ingest` gains v2 loaders + `ingest_core_v2`; a new `ingest_v2` Modal function writes the versioned corpus. Any results run on v2 requires re-pinning dataset revisions (several loaders currently stream) and re-verifying the sweep's split-stamp fix (prompt_hash keying). The greedy-vs-sampling external-validity caveat and the corpus-version used are recorded per result in `CLAIMS_LEDGER.md`.
+
+## D023 — Generator-critic autoresearch substrate for I13/I23
+
+- **Date:** 2026-07-19
+- **Context:** The pre-round headline (I23/C10) needs a search over candidate
+  cached-representation signals, but (a) the load-bearing datum — the TARGET
+  model's verified-context frontier representation — is not captured (I10's
+  `capture_activations` records only the DRAFT residual stream at
+  proposal-generating positions, i.e. the within-round signal), and (b) features
+  are hardcoded tuples in `cas.analysis.baselines` with no equal-capacity
+  controls. `docs/generator_critic.md` specifies a generator-critic loop
+  (eval-gated hill-climbing) as the execution method.
+- **Decision:**
+  1. Adopt the generator-critic loop as the execution METHOD for I13 (incremental
+     information) and I23 (pre-round prediction). It is a method, not new
+     scientific scope: locked corpus (D022), tooling (D015/D021), and
+     measurement-first ordering (D018) are unchanged.
+  2. **Target-frontier capture:** add `capture_frontier_activations` (mirrors
+     `capture_activations`; D015 eager / `output_hidden_states` path) recording
+     the target residual stream at the last-committed (frontier) position that
+     exists BEFORE each round drafts, at `DEFAULT_LAYERS`, labeled by that same
+     round's realized acceptance. New artifact family under
+     `/artifacts/probes/<run_id>/frontier/`; contract in `cas.autoresearch.types`.
+     No trace-schema change (activations live in separate `.npy`; the existing
+     `activation_artifact_id` slot may reference them).
+  3. **Generator = parameterized seed library, NOT free-form code generation.**
+     Candidates are `FeatureSpec(family in {raw,lowrank,drift,align,norm}, layers,
+     params)`. No arbitrary code executes inside the loop (reproducibility + safety).
+  4. **Frozen bar + controls:** every candidate is scored as incremental lift
+     over the frozen `preround_hardened` baseline (~0.73 AUROC) AND must beat
+     norm-matched and random controls of equal dimensionality, under
+     prompt-grouped `GroupKFold` OOF, with decision-regret reported (D018).
+     Selection on dev only; test frozen.
+  5. Mechanistic/"circuit" language stays G2-gated (D020): a predictive survivor
+     is a "diagnostic signal", never a "circuit", until interventions (I15) pass.
+- **Alternatives:** free-form code-gen generator (rejected: irreproducible,
+  unsafe); reuse draft-side within-round activations as the pre-round signal
+  (rejected: wrong side of the round — post-draft, not available before
+  drafting); no controls (rejected: a lift over the zero-feature baseline is not
+  evidence).
+- **Consequences:** new package `src/cas/autoresearch/` (types, features, eval,
+  cost); new `scripts/fit_autoresearch.py`; new Modal `capture_frontier_activations`;
+  new `.claude/workflows/generator_critic.js`. I13/I23 -> IN_PROGRESS (Claude).
+  Numbers land in `CLAIMS_LEDGER.md` (C10, incremental); killed candidates and any
+  negative result are logged. No claim uses "circuit" pre-G2.
