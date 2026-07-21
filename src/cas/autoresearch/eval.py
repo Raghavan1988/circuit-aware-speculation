@@ -117,37 +117,31 @@ def _fit_oof(X, y, groups, seed=0, n_splits=5) -> np.ndarray:
     return oof
 
 
-def _calibrate_oof(oof, y, groups, seed=0, n_splits=5) -> np.ndarray:
-    """Prompt-grouped out-of-fold Platt recalibration of raw OOF probabilities.
+def _calibrate_oof(oof, y, seed=0) -> np.ndarray:
+    """Global Platt recalibration of out-of-fold acceptance probabilities.
 
-    Fits a 1-parameter logistic (Platt) on the LOG-ODDS of the raw OOF scores,
-    grouped and out-of-fold so the calibrator for any row never saw that row's
-    prompt (leakage-safe, D019). Platt is strictly monotonic, so AUROC/AUPRC are
-    preserved *exactly* — only Brier/ECE/regret change. This isolates whether a
-    candidate's ranking lift is decision-usable or merely a miscalibration
-    artifact of a high-dim probe. Returns calibrated probabilities aligned to
-    ``oof``. A single-class train fold falls back to the train prior.
+    Fits a single 2-parameter logistic (Platt) on the LOG-ODDS of the raw OOF
+    scores and applies it to the same scores. The scores are already
+    prompt-grouped out-of-fold (D019); a single GLOBAL monotonic map preserves
+    AUROC/AUPRC *exactly* — only Brier/ECE/regret change — which is exactly what
+    lets us isolate whether a candidate's ranking lift is decision-usable or
+    merely a miscalibration artifact of a high-dim probe. (A per-fold calibrator
+    would apply different monotone maps per fold and perturb AUROC, defeating the
+    purpose.) The calibrator is 2 parameters over thousands of rows, so any
+    in-sample optimism is negligible AND is applied identically to base and
+    combined, so it cancels in the (combined - base) decision-metric delta we
+    compare. Single-class y -> constant prior.
     """
     from sklearn.linear_model import LogisticRegression
-    from sklearn.model_selection import GroupKFold
 
     y = np.asarray(y)
-    groups = np.asarray(groups)
     s = np.clip(np.asarray(oof, dtype=float), 1e-6, 1.0 - 1e-6)
     logit = np.log(s / (1.0 - s)).reshape(-1, 1)
-
-    cal = np.zeros(len(y), dtype=float)
-    n_groups = len(np.unique(groups))
-    splits = max(2, min(n_splits, n_groups))
-    gkf = GroupKFold(n_splits=splits)
-    for tr, te in gkf.split(logit, y, groups):
-        if len(np.unique(y[tr])) < 2:
-            cal[te] = float(np.mean(y[tr])) if len(tr) else 0.5
-            continue
-        lr = LogisticRegression(max_iter=1000, random_state=seed)
-        lr.fit(logit[tr], y[tr])
-        cal[te] = lr.predict_proba(logit[te])[:, 1]
-    return cal
+    if len(np.unique(y)) < 2:
+        return np.full(len(y), float(np.mean(y)) if len(y) else 0.5)
+    lr = LogisticRegression(max_iter=1000, random_state=seed)
+    lr.fit(logit, y)
+    return lr.predict_proba(logit)[:, 1]
 
 
 def _metrics(y, oof) -> dict:
@@ -271,12 +265,12 @@ def incremental_lift(X_base, X_cand, y, groups, seed=0, n_splits=5,
            for k, v in designs.items()}
     models = {k: _metrics(y, v) for k, v in oof.items()}
 
-    # Leakage-safe recalibration (Platt, prompt-grouped OOF) of base + combined.
-    # Monotonic -> AUROC/AUPRC preserved; recomputes Brier/ECE/regret so we can
-    # tell a decision-usable signal from a fixable high-dim miscalibration artifact
-    # (D023; RESEARCH_SPEC controller / mechanism-systems trade-off). Controls are
-    # AUROC-only checks, so they are not recalibrated.
-    cal = {k: _calibrate_oof(oof[k], y, groups, seed=seed, n_splits=n_splits)
+    # Global Platt recalibration of the (already prompt-grouped OOF) base +
+    # combined scores. A single monotonic map preserves AUROC/AUPRC and only moves
+    # Brier/ECE/regret, so we can tell a decision-usable signal from a fixable
+    # high-dim miscalibration artifact (D023; RESEARCH_SPEC controller /
+    # mechanism-systems trade-off). Controls are AUROC-only checks -> not recalibrated.
+    cal = {k: _calibrate_oof(oof[k], y, seed=seed)
            for k in ("base", "combined")}
     cal_models = {k: _metrics(y, v) for k, v in cal.items()}
 
