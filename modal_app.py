@@ -1440,3 +1440,76 @@ def fit_probes(run_id: str = "sweep-2026-07-11T203836",
 @app.local_entrypoint()
 def probe(run_id: str = "sweep-2026-07-11T203836", layers: str = "6,12,18,24"):
     fit_probes.remote(run_id, layers=layers)
+
+
+@app.function(image=image, volumes=VOLUMES, timeout=2 * 3600)  # CPU-only
+def fit_autoresearch(run_id: str = "sweep-2026-07-11T203836",
+                     eval_split: str = "dev", layers: str = "6,12,18,24",
+                     spec_json: str = "", seed: int = 0) -> dict:
+    """I13/I23 (D023): score PRE-ROUND candidate signals from the TARGET-frontier
+    representation vs the frozen `preround_hardened` baseline (~0.73 AUROC), with
+    equal-capacity norm-matched + random controls under prompt-grouped OOF.
+
+    Reads the frontier artifact (capture_frontier) at
+    /artifacts/probes/<run>/frontier/ and the sealed fixed_8 traces. Runs the
+    default seed library (raw/lowrank/drift/norm/align), or one FeatureSpec via
+    --spec-json. CPU-only; dev-only by default (test stays frozen). Every number is
+    script-computed from immutable artifacts (AGENTS.md); results are CANDIDATES,
+    not claims — G1/G2 gates are tripped by hand and "circuit" language stays
+    G2-gated (D020)."""
+    import json as _json
+
+    from cas.autoresearch.features import default_seed_specs
+    from cas.autoresearch.types import FeatureSpec
+    from scripts.fit_autoresearch import (_baseline_by_round, _load_frontier,
+                                          score_spec)
+
+    layer_t = tuple(int(x) for x in layers.split(","))
+    acts, meta = _load_frontier(f"/artifacts/probes/{run_id}", layer_t)
+    base_by_key = _baseline_by_round(f"/artifacts/traces/{run_id}")
+
+    if spec_json:
+        d = _json.loads(spec_json)
+        specs = [FeatureSpec(d["name"], d["family"], tuple(d["layers"]),
+                             d.get("params", {}))]
+    else:
+        specs = default_seed_specs(layer_t)
+
+    results = [score_spec(s, acts, meta, base_by_key, eval_split, seed=seed)
+               for s in specs]
+    os.makedirs(f"/artifacts/analysis/{run_id}", exist_ok=True)
+    outp = f"/artifacts/analysis/{run_id}/autoresearch_{eval_split}.json"
+    with open(outp, "w") as f:
+        _json.dump({"run": run_id, "eval": eval_split, "results": results}, f,
+                   indent=2)
+    artifacts.commit()
+
+    ranked = sorted([r for r in results if r.get("deltas")],
+                    key=lambda r: (r["deltas"].get("auroc") or -1), reverse=True)
+    print(f"run={run_id} split={eval_split}  frozen bar = preround_hardened (~0.73)")
+    print(f"{'candidate':>24} {'d_auroc':>9} {'beats_base':>11} {'beats_ctrl':>11} "
+          f"{'combined':>9}")
+    for r in ranked:
+        d = r["deltas"].get("auroc")
+        comb = r["combined"].get("auroc")
+        ds = f"{d:+.4f}" if d is not None else "n/a"
+        cs = f"{comb:.4f}" if comb is not None else "n/a"
+        print(f"{r['spec']['name']:>24} {ds:>9} {str(r['beats_baseline']):>11} "
+              f"{str(r['beats_controls']):>11} {cs:>9}")
+    winners = [r["spec"]["name"] for r in ranked
+               if r["beats_baseline"] and r["beats_controls"]]
+    print("beats baseline+controls: "
+          + (", ".join(winners) if winners
+             else "NONE (seed library did not clear the pre-round bar)"))
+    return {"run": run_id, "eval": eval_split, "n_specs": len(results),
+            "winners": winners,
+            "leaderboard": [{"name": r["spec"]["name"],
+                             "delta_auroc": r["deltas"].get("auroc"),
+                             "beats_baseline": r["beats_baseline"],
+                             "beats_controls": r["beats_controls"]} for r in ranked]}
+
+
+@app.local_entrypoint()
+def autoresearch(run_id: str = "sweep-2026-07-11T203836", eval_split: str = "dev",
+                 layers: str = "6,12,18,24", spec_json: str = "", seed: int = 0):
+    fit_autoresearch.remote(run_id, eval_split, layers, spec_json, seed)
