@@ -243,3 +243,28 @@ Use dated entries with context, decision, alternatives, and consequences. Do not
   new `.claude/workflows/generator_critic.js`. I13/I23 -> IN_PROGRESS (Claude).
   Numbers land in `CLAIMS_LEDGER.md` (C10, incremental); killed candidates and any
   negative result are logged. No claim uses "circuit" pre-G2.
+
+## D024 — Autoresearch orchestrator relocated into the tracked package
+
+- **Date:** 2026-07-20
+- **Context:** D023 created the generator-critic orchestrator at
+  `.claude/workflows/generator_critic.js`. `.claude/` holds Claude Code tooling
+  state (`settings.local.json`), not the research artifact; the owner directed
+  that the orchestrator live in the tracked repository so the whole autoresearch
+  loop (python package + orchestrator) is one committed, reproducible unit.
+- **Decision:** Move the orchestrator to
+  `src/cas/autoresearch/generator_critic.js`, co-located with the package it
+  drives (types/features/eval/cost). It is invoked as a Workflow by `scriptPath`
+  (that path), not by registered name — moving it out of `.claude/workflows/`
+  removes name-based discovery, an accepted consequence.
+  `.claude/settings.local.json` stays (local tooling config). The embedded fit
+  command (`PYTHONPATH=src python scripts/fit_autoresearch.py ...`) is repo-root
+  relative and unchanged.
+- **Alternatives:** keep it in `.claude/workflows/` (rejected: not tracked as an
+  artifact, tooling-specific); a new top-level `workflows/` dir (rejected: splits
+  the loop across two locations); `scripts/` (reasonable, but package
+  co-location is more cohesive).
+- **Consequences:** D023's consequences line naming the old path is historical
+  (append-only convention). The backlog build-status note and
+  `docs/generator_critic.md` §8 reference the new path. The file is untracked at
+  the new location until committed.

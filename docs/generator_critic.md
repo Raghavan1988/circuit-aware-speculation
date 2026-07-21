@@ -209,6 +209,11 @@ Non-negotiable; these are guardrails *on* the loop, not tasks *for* it:
 
 ## 8. Workflow sketch
 
+> Runnable orchestrator: `src/cas/autoresearch/generator_critic.js` — invoke via
+> the Workflow tool's `scriptPath`. It lives beside the `cas.autoresearch` package
+> it drives (not under `.claude/`), so the whole loop is tracked as part of the
+> artifact (D024).
+
 Run as a background `Workflow` over saved artifacts (illustrative skeleton;
 actual feature specs and artifact paths resolved at run time):
 
