@@ -108,5 +108,47 @@ def test_controls_have_same_feature_count_as_combined():
     assert combined_width == 5
 
 
+def test_recalibration_preserves_auroc_and_reduces_ece():
+    from sklearn.metrics import roc_auc_score
+
+    from cas.autoresearch.eval import _calibrate_oof, _ece
+
+    rng = np.random.default_rng(DATA_SEED)
+    groups, n = _grouped(n_groups=40, rows_per=15)
+    y = (rng.random(n) < 0.5).astype(int)
+    # Well-RANKED but OVERCONFIDENT scores: monotone in a latent that tracks y,
+    # then pushed toward 0/1 so the probabilities are deliberately miscalibrated.
+    base_p = np.clip(0.5 + 0.4 * (2 * y - 1) * rng.uniform(0.0, 1.0, n)
+                     + 0.12 * rng.standard_normal(n), 1e-3, 1 - 1e-3)
+    over = np.clip((base_p - 0.5) * 3.0 + 0.5, 1e-3, 1 - 1e-3)  # overconfident, monotone
+
+    cal = _calibrate_oof(over, y, groups, seed=SEED)
+
+    # Platt is monotonic -> ranking (AUROC) preserved (barring clip-induced ties).
+    assert abs(roc_auc_score(y, cal) - roc_auc_score(y, over)) < 1e-6
+    # Recalibrating a deliberately-overconfident input must not worsen ECE.
+    assert _ece(y, cal) <= _ece(y, over) + 1e-9
+
+
+def test_incremental_lift_exposes_calibrated_decision_metrics():
+    rng = np.random.default_rng(DATA_SEED)
+    groups, n = _grouped()
+    latent = rng.standard_normal(n)
+    y = (rng.random(n) < 1.0 / (1.0 + np.exp(-latent))).astype(int)
+    X_base = rng.standard_normal((n, 3))
+    X_cand = (latent + 0.5 * rng.standard_normal(n)).reshape(-1, 1)
+
+    res = incremental_lift(X_base, X_cand, y, groups, seed=SEED, n_boot=100)
+
+    for k in ("base_calibrated", "combined_calibrated", "deltas_calibrated",
+              "helps_decision_calibrated"):
+        assert k in res
+    # Calibration is monotonic -> calibrated AUROC equals the raw AUROC.
+    assert abs(res["combined_calibrated"]["auroc"] - res["combined"]["auroc"]) < 1e-6
+    assert abs(res["base_calibrated"]["auroc"] - res["base"]["auroc"]) < 1e-6
+    assert isinstance(res["helps_decision_calibrated"], bool)
+    assert 0.0 <= res["combined_calibrated"]["regret"] <= 1.0
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
