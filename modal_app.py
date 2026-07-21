@@ -1766,17 +1766,19 @@ def g3(context_len: int = 256, draft_len: int = 8, reps: int = 50):
     g3_overhead.remote(context_len, draft_len, reps)
 
 
-@app.function(image=image, volumes=VOLUMES, timeout=4 * 3600)  # CPU-only
+@app.function(image=image, volumes=VOLUMES, timeout=6 * 3600)  # CPU-only
 def fit_autoresearch_length(run_id: str = "sweep-2026-07-11T203836",
                             eval_split: str = "dev", layers: str = "6,12,18,24",
                             ks: str = "1,2,4,6,8", seed: int = 0,
-                            n_boot: int = 500) -> dict:
-    """I23/D023 length-aware: per-accepted-length SURVIVAL probes -- one logistic
-    per k in `ks` predicting P(accepted_len >= k) from the target-frontier
-    representation vs the frozen baseline (prompt-grouped OOF, equal-capacity
-    control, prompt-grouped CI, calibrated ECE). The length ("how many tokens")
-    counterpart to the binary accept probe; k=1 == binary accept. CPU-only;
-    dev-only by default; results are CANDIDATES, not claims (G1/G2 gated by hand)."""
+                            n_boot: int = 2000, c_reg: float = 0.1) -> dict:
+    """I23/D023 length-aware. Tier-1: per-accepted-length SURVIVAL probes
+    P(accepted_len >= k) from the target-frontier representation vs the frozen
+    baseline (prompt-grouped OOF, equal-capacity control, prompt-grouped CI). Tier-2:
+    the length-aware controller payoff -- choose the proposal length from the
+    predicted survival curve, throughput regret vs a clairvoyant oracle across draft
+    costs. `c_reg` is the L2 knob: c_reg<=0.1 converges the high-dim probe for a
+    REPRODUCIBLE fit (docs/autoresearch_outcomes.md §6.2). CPU-only; dev-only by
+    default; CANDIDATES, not claims (G1/G2 gated by hand)."""
     import json as _json
 
     from cas.autoresearch.features import default_seed_specs
@@ -1788,14 +1790,15 @@ def fit_autoresearch_length(run_id: str = "sweep-2026-07-11T203836",
     acts, meta = _load_frontier(f"/artifacts/probes/{run_id}", layer_t)
     base_by_key = _baseline_by_round(f"/artifacts/traces/{run_id}")
     specs = default_seed_specs(layer_t)
-    results = [score_spec_length(s, acts, meta, base_by_key, eval_split,
-                                 ks=ks_t, seed=seed, n_boot=n_boot) for s in specs]
+    results = [score_spec_length(s, acts, meta, base_by_key, eval_split, ks=ks_t,
+                                 seed=seed, n_boot=n_boot, c_reg=c_reg)
+               for s in specs]
 
     os.makedirs(f"/artifacts/analysis/{run_id}", exist_ok=True)
     outp = f"/artifacts/analysis/{run_id}/autoresearch_length_{eval_split}.json"
     with open(outp, "w") as f:
         _json.dump({"run": run_id, "eval": eval_split, "ks": list(ks_t),
-                    "results": results}, f, indent=2)
+                    "c_reg": c_reg, "n_boot": n_boot, "results": results}, f, indent=2)
     artifacts.commit()
 
     scored = [r for r in results if r.get("per_k")]
@@ -1803,8 +1806,8 @@ def fit_autoresearch_length(run_id: str = "sweep-2026-07-11T203836",
                 reverse=True)
     if scored:
         top = scored[0]
-        print(f"run={run_id} split={eval_split}  per-length survival probes P(A>=k), "
-              f"top candidate '{top['spec']['name']}':")
+        print(f"run={run_id} split={eval_split} c_reg={c_reg} n_boot={n_boot}")
+        print(f"[Tier-1] per-length survival probes P(A>=k), top '{top['spec']['name']}':")
         print(f"{'k':>3} {'P(A>=k)':>9} {'base_auc':>9} {'comb_auc':>9} "
               f"{'d_auroc':>9} {'ci_lo':>8} {'ci_hi':>8} {'beats_ctrl':>10}")
         for k in top["ks"]:
@@ -1819,15 +1822,32 @@ def fit_autoresearch_length(run_id: str = "sweep-2026-07-11T203836",
             print(f"{k:>3} {p['pos_rate']:>9.3f} {p['base_auroc']:>9.4f} "
                   f"{p['combined_auroc']:>9.4f} {p['delta_auroc']:>+9.4f} "
                   f"{los:>8} {his:>8} {str(p['beats_control']):>10}")
-    return {"run": run_id, "eval": eval_split, "ks": list(ks_t),
+        pay = top.get("length_payoff") or []
+        if pay:
+            print(f"\n[Tier-2] length-controller throughput regret (lower=better), "
+                  f"top '{top['spec']['name']}' (actions=skip+{list(ks_t)}):")
+            print(f"{'cost':>6} {'reg_base':>9} {'reg_comb':>9} {'reg_fix':>8} "
+                  f"{'fixL':>5} {'d_reg':>9} {'ci_lo':>9} {'ci_hi':>9} {'helps':>6} "
+                  f"{'meanL_c':>8}")
+            for s in pay:
+                print(f"{s['cost_draft']:>6.2f} {s['regret_base']:>9.4f} "
+                      f"{s['regret_combined']:>9.4f} {s['regret_best_fixed']:>8.4f} "
+                      f"{s['best_fixed_action']:>5} {s['delta_regret']:>+9.4f} "
+                      f"{s['delta_ci_lo']:>+9.4f} {s['delta_ci_hi']:>+9.4f} "
+                      f"{str(s['helps_ci']):>6} {s['mean_len_combined']:>8.2f}")
+            robust = [s["cost_draft"] for s in pay if s["helps_ci"]]
+            print("  combined length-controller beats baseline (CI<0) at cost: "
+                  + (", ".join(f"{c:.2f}" for c in robust) if robust else "NONE"))
+    return {"run": run_id, "eval": eval_split, "ks": list(ks_t), "c_reg": c_reg,
             "n_specs": len(results)}
 
 
 @app.local_entrypoint()
 def autoresearch_length(run_id: str = "sweep-2026-07-11T203836",
                         eval_split: str = "dev", layers: str = "6,12,18,24",
-                        ks: str = "1,2,4,6,8", seed: int = 0, n_boot: int = 500):
-    """Per-length survival probes P(accepted_len>=k) (D023). LAPTOP-SAFE: prefix
-    with `modal run --detach`; read results with autoresearch_show is binary-only,
-    so pull the length JSON from /artifacts/analysis/<run>/autoresearch_length_*.json."""
-    fit_autoresearch_length.remote(run_id, eval_split, layers, ks, seed, n_boot)
+                        ks: str = "1,2,4,6,8", seed: int = 0, n_boot: int = 2000,
+                        c_reg: float = 0.1):
+    """Tier-1 per-length survival probes + Tier-2 length-controller payoff (D023).
+    c_reg<=0.1 gives a reproducible (converged) fit. LAPTOP-SAFE: prefix
+    `modal run --detach`; results at /artifacts/analysis/<run>/autoresearch_length_*.json."""
+    fit_autoresearch_length.remote(run_id, eval_split, layers, ks, seed, n_boot, c_reg)
