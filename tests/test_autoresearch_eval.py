@@ -210,5 +210,27 @@ def test_noninformative_candidate_is_not_ci_robust():
     assert not any(e["helps_ci"] for e in ci)            # zero delta -> never CI-robust
 
 
+def test_credible_systems_flag_is_conservative():
+    # A candidate with no ranking lift must never be flagged credible, and the
+    # flag must be internally consistent (credible => AUROC-CI-clean AND >=2
+    # CI-robust costs). This is the drift/align guard at the summary level.
+    rng = np.random.default_rng(DATA_SEED)
+    groups, n = _grouped()
+    latent = rng.standard_normal(n)
+    y = (rng.random(n) < 1.0 / (1.0 + np.exp(-latent))).astype(int)
+    X_base = rng.standard_normal((n, 3))                 # neither carries `latent`
+    X_noise = rng.standard_normal((n, 1))                # -> no real signal
+
+    res = incremental_lift(X_base, X_noise, y, groups, seed=SEED, n_boot=300)
+
+    assert res["credible_systems"] is False
+    assert isinstance(res["credible_systems"], bool)
+    for k in ("auroc_ci_clean", "n_ci_robust_costs", "credible_systems"):
+        assert k in res
+    # internal consistency of the composite flag
+    if res["credible_systems"]:
+        assert res["auroc_ci_clean"] and res["n_ci_robust_costs"] >= 2
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
