@@ -11,7 +11,13 @@ import pytest
 
 from cas.autoresearch.eval import decision_regret, incremental_lift
 
-SEED = 0
+SEED = 0            # the scorer's internal seed (controls, bootstrap)
+# Synthetic data uses a DIFFERENT stream than SEED on purpose: the scorer draws
+# its equal-capacity control noise from default_rng(SEED); if the test data were
+# also drawn from default_rng(SEED) the control noise would collide byte-for-byte
+# with the signal and the "random" control would reconstruct y. Real callers pass
+# activations for X_cand, never the scorer's seed stream, so no collision occurs.
+DATA_SEED = 20260719
 
 
 def _grouped(n_groups=40, rows_per=12):
@@ -21,7 +27,7 @@ def _grouped(n_groups=40, rows_per=12):
 
 
 def test_informative_candidate_beats_baseline_with_positive_delta():
-    rng = np.random.default_rng(SEED)
+    rng = np.random.default_rng(DATA_SEED)
     groups, n = _grouped()
     latent = rng.standard_normal(n)                      # the signal driving y
     p = 1.0 / (1.0 + np.exp(-1.6 * latent))
@@ -40,7 +46,7 @@ def test_informative_candidate_beats_baseline_with_positive_delta():
 
 
 def test_noise_candidate_fails_its_equal_capacity_control():
-    rng = np.random.default_rng(SEED)
+    rng = np.random.default_rng(DATA_SEED)
     groups, n = _grouped()
     latent = rng.standard_normal(n)                      # y depends on a hidden
     y = (rng.random(n) < 1.0 / (1.0 + np.exp(-latent))).astype(int)
@@ -57,7 +63,7 @@ def test_noise_candidate_fails_its_equal_capacity_control():
 
 
 def test_decision_regret_zero_for_perfect_and_positive_for_constant():
-    rng = np.random.default_rng(SEED)
+    rng = np.random.default_rng(DATA_SEED)
     y = (rng.random(200) < 0.4).astype(int)
     assert 0 < y.mean() < 1                              # both classes present
 
@@ -71,7 +77,7 @@ def test_decision_regret_zero_for_perfect_and_positive_for_constant():
 
 
 def test_ece_in_unit_interval_for_all_models():
-    rng = np.random.default_rng(SEED)
+    rng = np.random.default_rng(DATA_SEED)
     groups, n = _grouped()
     latent = rng.standard_normal(n)
     y = (rng.random(n) < 1.0 / (1.0 + np.exp(-latent))).astype(int)
@@ -85,7 +91,7 @@ def test_ece_in_unit_interval_for_all_models():
 
 
 def test_controls_have_same_feature_count_as_combined():
-    rng = np.random.default_rng(SEED)
+    rng = np.random.default_rng(DATA_SEED)
     groups, n = _grouped()
     y = (rng.random(n) < 0.5).astype(int)
     X_base = rng.standard_normal((n, 3))                 # 3 baseline features
