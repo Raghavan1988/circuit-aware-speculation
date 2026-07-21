@@ -393,14 +393,24 @@ def incremental_lift(X_base, X_cand, y, groups, seed=0, n_splits=5,
     beats_controls = (a_comb is not None and len(ctrl_defined) > 0
                       and a_comb > max(ctrl_defined) + 1e-4)
 
+    auroc_ci = _group_bootstrap_delta(y, oof["base"], oof["combined"], groups,
+                                      seed=seed, n_boot=n_boot)
+    n_ci_robust = int(sum(1 for s in reg_sweep if s["helps_ci"]))
+    # Credible systems signal: the ranking lift is statistically real (AUROC CI
+    # excludes 0) AND the decision-regret reduction is CI-robust over a cost RANGE
+    # (>= 2 costs). A single CI-robust cost from a worse-ranking feature (the drift
+    # anomaly, docs/autoresearch_outcomes.md §5) is a threshold fluke, not evidence.
+    auroc_ci_clean = bool(auroc_ci.get("p_delta_le_0") is not None
+                          and auroc_ci["p_delta_le_0"] < 0.05)
+    credible_systems = bool(auroc_ci_clean and n_ci_robust >= 2)
+
     out = dict(models)
     out.update({
         "deltas": {"auroc": _delta("auroc"), "auprc": _delta("auprc"),
                    "brier": _delta("brier")},
         "beats_baseline": bool(beats_baseline),
         "beats_controls": bool(beats_controls),
-        "delta_auroc_ci": _group_bootstrap_delta(
-            y, oof["base"], oof["combined"], groups, seed=seed, n_boot=n_boot),
+        "delta_auroc_ci": auroc_ci,
         # Recalibrated (Platt OOF) decision metrics for base vs combined. AUROC/
         # AUPRC in these blocks equal the raw ones (monotonic); Brier/ECE/regret
         # are the post-calibration values. `helps_decision_calibrated` is the
@@ -414,6 +424,9 @@ def incremental_lift(X_base, X_cand, y, groups, seed=0, n_splits=5,
         "regret_cost_sweep": reg_sweep,
         "helps_at_any_cost": bool(any(s["helps"] for s in reg_sweep)),
         "helps_at_any_cost_ci": bool(any(s["helps_ci"] for s in reg_sweep)),
+        "auroc_ci_clean": auroc_ci_clean,
+        "n_ci_robust_costs": n_ci_robust,
+        "credible_systems": credible_systems,
         "n": int(n),
         "pos_rate": float(np.mean(y)),
         "n_features_base": int(n_feat_base),
