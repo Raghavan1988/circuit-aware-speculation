@@ -1328,13 +1328,21 @@ def capture_frontier_activations(run_id: str = "sweep-2026-07-11T203836",
         prompt_text = {json.loads(l)["prompt_id"]: json.loads(l)["prompt_text"]
                        for l in (ln for ln in f)}
 
+    if split not in ("dev", "test", "all"):
+        raise ValueError(f"split must be 'dev', 'test', or 'all'; got {split!r}")
+
     by_req: dict = {}
     for r in rounds:
         by_req.setdefault(r["request_id"], []).append(r)
-    reqs = [rid for rid in by_req
-            if split_of.get(rid) == split and rid in prompt_text]
-    reqs.sort()
-    reqs = reqs[:cap_prompts]
+    # "all" captures dev AND test into one artifact (cap_prompts applied PER split
+    # for balance); downstream fits still filter rows by their per-row `split`, so
+    # dev-selection stays honest and test stays frozen until deliberately used.
+    target_splits = ("dev", "test") if split == "all" else (split,)
+    reqs = []
+    for sp in target_splits:
+        sp_reqs = sorted(rid for rid in by_req
+                         if split_of.get(rid) == sp and rid in prompt_text)
+        reqs += sp_reqs[:cap_prompts]
 
     acts = {L: [] for L in DEFAULT_LAYERS}
     meta = []
@@ -1383,6 +1391,11 @@ def capture_frontier_activations(run_id: str = "sweep-2026-07-11T203836",
         if (j + 1) % 20 == 0:
             print(f"{j+1}/{len(reqs)} prompts, {n_rows} frontier rows", flush=True)
 
+    if n_rows == 0:
+        raise ValueError(
+            f"no frontier rows captured for run={run_id} split={split}; check the "
+            "run has fixed_8 traces and the split manifest matches the requested split")
+
     outdir = f"/artifacts/probes/{run_id}/{FRONTIER_SUBDIR}"
     os.makedirs(outdir, exist_ok=True)
     for L in DEFAULT_LAYERS:
@@ -1403,6 +1416,17 @@ def capture_frontier_activations(run_id: str = "sweep-2026-07-11T203836",
 @app.local_entrypoint()
 def capture_frontier(run_id: str = "sweep-2026-07-11T203836",
                      cap_prompts: int = 120, split: str = "dev"):
+    """Capture the target-frontier representation for a sealed run (D023).
+
+    --split: 'dev' (default), 'test', or 'all' (dev+test in one artifact,
+             cap_prompts applied per split). Capturing 'all' once avoids the
+             re-capture-overwrites-dev footgun before the eventual test pass.
+
+    LAPTOP-SAFE: launch with `modal run --detach` so the job keeps running on
+    Modal's infrastructure after you close the laptop / terminal --
+        modal run --detach modal_app.py::capture_frontier --split all
+    then watch it later with `modal app list` and `modal app logs <app-id>`.
+    """
     capture_frontier_activations.remote(run_id, cap_prompts=cap_prompts, split=split)
 
 
@@ -1512,4 +1536,10 @@ def fit_autoresearch(run_id: str = "sweep-2026-07-11T203836",
 @app.local_entrypoint()
 def autoresearch(run_id: str = "sweep-2026-07-11T203836", eval_split: str = "dev",
                  layers: str = "6,12,18,24", spec_json: str = "", seed: int = 0):
+    """Score pre-round candidate signals vs the frozen 0.73 bar (D023).
+
+    eval_split stays 'dev' until the deliberate one-shot 'test' pass. LAPTOP-SAFE:
+    prefix with `modal run --detach` to survive closing the laptop --
+        modal run --detach modal_app.py::autoresearch --eval-split dev
+    """
     fit_autoresearch.remote(run_id, eval_split, layers, spec_json, seed)
