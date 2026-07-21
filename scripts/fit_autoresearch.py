@@ -143,6 +143,32 @@ def score_spec(spec: FeatureSpec, acts, meta, base_by_key, eval_split, seed=0):
     return res
 
 
+def score_spec_length(spec: FeatureSpec, acts, meta, base_by_key, eval_split,
+                      ks=(1, 2, 4, 6, 8), seed=0, n_boot=1000):
+    """Per-accepted-length survival probes for one FeatureSpec: fit
+    P(accepted_len >= k) for each k, over the frontier features vs the frozen
+    baseline (cas.autoresearch.eval.length_probe_lift). Uses the `accepted_len`
+    label captured in the frontier metadata (unused by the binary score_spec)."""
+    import numpy as np
+
+    from cas.autoresearch.eval import length_probe_lift
+    from cas.autoresearch.features import build_features
+
+    acts_s, meta_s = _subset(acts, meta, eval_split)
+    if not meta_s:
+        return {"spec": spec.name, "note": f"no rows on split={eval_split}"}
+    X_cand = build_features(spec, acts_s, meta_s)
+    X_base = _baseline_design(meta_s, base_by_key)
+    accepted_len = np.array([int(m["accepted_len"]) for m in meta_s])
+    groups = np.array([m["request_id"] for m in meta_s])
+    res = length_probe_lift(X_base, X_cand, accepted_len, groups, ks=tuple(ks),
+                            seed=seed, n_boot=n_boot)
+    res["spec"] = {"name": spec.name, "family": spec.family,
+                   "layers": list(spec.layers), "params": spec.params}
+    res["eval_split"] = eval_split
+    return res
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", required=True, help="trace run id (…/probes/<run>)")
