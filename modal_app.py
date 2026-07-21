@@ -1510,16 +1510,27 @@ def fit_autoresearch(run_id: str = "sweep-2026-07-11T203836",
 
     ranked = sorted([r for r in results if r.get("deltas")],
                     key=lambda r: (r["deltas"].get("auroc") or -1), reverse=True)
-    print(f"run={run_id} split={eval_split}  frozen bar = preround_hardened (~0.73)")
-    print(f"{'candidate':>24} {'d_auroc':>9} {'beats_base':>11} {'beats_ctrl':>11} "
-          f"{'combined':>9}")
+    print(f"run={run_id} split={eval_split}  frozen bar = preround_hardened "
+          f"(base AUROC ~0.70 dev)")
+    if ranked:
+        _b = ranked[0].get("base_calibrated") or {}
+        if _b.get("ece") is not None:
+            print(f"  base (recalibrated): ece={_b['ece']:.4f} "
+                  f"regret={_b['regret']:.4f}")
+    print(f"{'candidate':>22} {'d_auroc':>8} {'win':>4} {'cal_ece':>8} "
+          f"{'cal_reg':>8} {'d_reg_cal':>10} {'helps_dec':>9}")
     for r in ranked:
         d = r["deltas"].get("auroc")
-        comb = r["combined"].get("auroc")
+        cc = r.get("combined_calibrated") or {}
+        dc = r.get("deltas_calibrated") or {}
         ds = f"{d:+.4f}" if d is not None else "n/a"
-        cs = f"{comb:.4f}" if comb is not None else "n/a"
-        print(f"{r['spec']['name']:>24} {ds:>9} {str(r['beats_baseline']):>11} "
-              f"{str(r['beats_controls']):>11} {cs:>9}")
+        win = "Y" if (r["beats_baseline"] and r["beats_controls"]) else "-"
+        ece, reg, dreg = cc.get("ece"), cc.get("regret"), dc.get("regret")
+        es = f"{ece:.4f}" if ece is not None else "n/a"
+        rs = f"{reg:.4f}" if reg is not None else "n/a"
+        drs = f"{dreg:+.4f}" if dreg is not None else "n/a"
+        print(f"{r['spec']['name']:>22} {ds:>8} {win:>4} {es:>8} {rs:>8} "
+              f"{drs:>10} {str(r.get('helps_decision_calibrated')):>9}")
     winners = [r["spec"]["name"] for r in ranked
                if r["beats_baseline"] and r["beats_controls"]]
     print("beats baseline+controls: "
@@ -1569,16 +1580,27 @@ def show_autoresearch(run_id: str = "sweep-2026-07-11T203836",
 
     ranked = sorted([r for r in results if r.get("deltas")],
                     key=lambda r: (r["deltas"].get("auroc") or -1), reverse=True)
-    print(f"run={run_id} split={eval_split}  frozen bar = preround_hardened (~0.73)")
-    print(f"{'candidate':>24} {'d_auroc':>9} {'beats_base':>11} {'beats_ctrl':>11} "
-          f"{'combined':>9}")
+    print(f"run={run_id} split={eval_split}  frozen bar = preround_hardened "
+          f"(base AUROC ~0.70 dev)")
+    if ranked:
+        _b = ranked[0].get("base_calibrated") or {}
+        if _b.get("ece") is not None:
+            print(f"  base (recalibrated): ece={_b['ece']:.4f} "
+                  f"regret={_b['regret']:.4f}")
+    print(f"{'candidate':>22} {'d_auroc':>8} {'win':>4} {'cal_ece':>8} "
+          f"{'cal_reg':>8} {'d_reg_cal':>10} {'helps_dec':>9}")
     for r in ranked:
         d = r["deltas"].get("auroc")
-        comb = r["combined"].get("auroc")
+        cc = r.get("combined_calibrated") or {}
+        dc = r.get("deltas_calibrated") or {}
         ds = f"{d:+.4f}" if d is not None else "n/a"
-        cs = f"{comb:.4f}" if comb is not None else "n/a"
-        print(f"{r['spec']['name']:>24} {ds:>9} {str(r['beats_baseline']):>11} "
-              f"{str(r['beats_controls']):>11} {cs:>9}")
+        win = "Y" if (r["beats_baseline"] and r["beats_controls"]) else "-"
+        ece, reg, dreg = cc.get("ece"), cc.get("regret"), dc.get("regret")
+        es = f"{ece:.4f}" if ece is not None else "n/a"
+        rs = f"{reg:.4f}" if reg is not None else "n/a"
+        drs = f"{dreg:+.4f}" if dreg is not None else "n/a"
+        print(f"{r['spec']['name']:>22} {ds:>8} {win:>4} {es:>8} {rs:>8} "
+              f"{drs:>10} {str(r.get('helps_decision_calibrated')):>9}")
     for r in [r for r in results if not r.get("deltas")]:
         nm = r.get("spec")
         nm = nm if isinstance(nm, str) else (nm or {}).get("name", "?")
