@@ -1556,6 +1556,9 @@ def fit_autoresearch(run_id: str = "sweep-2026-07-11T203836",
     print("beats baseline+controls: "
           + (", ".join(winners) if winners
              else "NONE (seed library did not clear the pre-round bar)"))
+    credible = [r["spec"]["name"] for r in ranked if r.get("credible_systems")]
+    print("CREDIBLE systems (AUROC-CI-clean + CI-robust regret over >=2 costs): "
+          + (", ".join(credible) if credible else "NONE"))
     return {"run": run_id, "eval": eval_split, "n_specs": len(results),
             "winners": winners,
             "leaderboard": [{"name": r["spec"]["name"],
@@ -1650,6 +1653,9 @@ def show_autoresearch(run_id: str = "sweep-2026-07-11T203836",
     print("beats baseline+controls: "
           + (", ".join(winners) if winners
              else "NONE (seed library did not clear the pre-round bar)"))
+    credible = [r["spec"]["name"] for r in ranked if r.get("credible_systems")]
+    print("CREDIBLE systems (AUROC-CI-clean + CI-robust regret over >=2 costs): "
+          + (", ".join(credible) if credible else "NONE"))
     return {"run": run_id, "eval": eval_split, "winners": winners,
             "n_results": len(results)}
 
