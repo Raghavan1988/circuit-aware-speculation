@@ -123,7 +123,7 @@ until the GPU gate passes; no results exist yet. Run order on Modal:
   - Step 1 `capture_frontier_activations` (Modal, target frontier capture);
     Step 2 `features.py` (seed-library transforms); Step 3 `eval.py` (incremental
     lift + equal-capacity controls + regret); Step 4 `cost.py` (deployed-cost
-    probe); Step 5 `.claude/workflows/generator_critic.js` (orchestration).
+    probe); Step 5 `src/cas/autoresearch/generator_critic.js` (orchestration).
   - Frozen bar = `preround_hardened` (~0.73 AUROC); every candidate must beat it
     AND norm-matched + random controls under prompt-grouped GroupKFold OOF,
     dev-only. "Circuit"/"mechanism" language stays G2-gated (D020).
