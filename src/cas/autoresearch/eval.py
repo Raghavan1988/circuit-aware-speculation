@@ -342,6 +342,8 @@ def incremental_lift(X_base, X_cand, y, groups, seed=0, n_splits=5,
                               "regret": _cdelta("regret")},
         "helps_decision_calibrated": bool(
             cal_models["combined"]["regret"] < cal_models["base"]["regret"] - 1e-6),
+        "regret_cost_sweep": reg_sweep,
+        "helps_at_any_cost": bool(any(s["helps"] for s in reg_sweep)),
         "n": int(n),
         "pos_rate": float(np.mean(y)),
         "n_features_base": int(n_feat_base),
