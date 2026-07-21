@@ -144,14 +144,21 @@ def score_spec(spec: FeatureSpec, acts, meta, base_by_key, eval_split, seed=0):
 
 
 def score_spec_length(spec: FeatureSpec, acts, meta, base_by_key, eval_split,
-                      ks=(1, 2, 4, 6, 8), seed=0, n_boot=1000):
-    """Per-accepted-length survival probes for one FeatureSpec: fit
-    P(accepted_len >= k) for each k, over the frontier features vs the frozen
-    baseline (cas.autoresearch.eval.length_probe_lift). Uses the `accepted_len`
-    label captured in the frontier metadata (unused by the binary score_spec)."""
+                      ks=(1, 2, 4, 6, 8), seed=0, n_boot=1000, c_reg=1.0):
+    """Per-accepted-length survival probes for one FeatureSpec (Tier-1) PLUS the
+    length-aware controller payoff (Tier-2).
+
+    Tier-1: fit P(accepted_len >= k) for each k over the frontier features vs the
+    frozen baseline (cas.autoresearch.eval.length_probe_lift), using the
+    `accepted_len` label captured in the frontier metadata. Tier-2: feed the
+    calibrated survival curves into cas.autoresearch.eval.length_payoff -- choose
+    the proposal length from predicted survival and score throughput regret vs a
+    clairvoyant oracle across draft costs. The survival arrays are consumed here and
+    NOT returned (they are numpy, not JSON-serialisable)."""
     import numpy as np
 
-    from cas.autoresearch.eval import length_probe_lift
+    from cas.autoresearch.eval import (COST_GRID, length_payoff,
+                                       length_probe_lift)
     from cas.autoresearch.features import build_features
 
     acts_s, meta_s = _subset(acts, meta, eval_split)
@@ -162,7 +169,15 @@ def score_spec_length(spec: FeatureSpec, acts, meta, base_by_key, eval_split,
     accepted_len = np.array([int(m["accepted_len"]) for m in meta_s])
     groups = np.array([m["request_id"] for m in meta_s])
     res = length_probe_lift(X_base, X_cand, accepted_len, groups, ks=tuple(ks),
-                            seed=seed, n_boot=n_boot)
+                            seed=seed, n_boot=n_boot, c_reg=c_reg)
+    surv = res.pop("surv_oof")       # numpy arrays -> consume for Tier-2, don't serialize
+    fit_ks = sorted(surv)
+    res["length_payoff"] = (
+        length_payoff({k: surv[k]["base"] for k in fit_ks},
+                      {k: surv[k]["combined"] for k in fit_ks},
+                      accepted_len, groups, ks=tuple(fit_ks), costs=COST_GRID,
+                      seed=seed, n_boot=n_boot)
+        if len(fit_ks) >= 2 else [])
     res["spec"] = {"name": spec.name, "family": spec.family,
                    "layers": list(spec.layers), "params": spec.params}
     res["eval_split"] = eval_split
