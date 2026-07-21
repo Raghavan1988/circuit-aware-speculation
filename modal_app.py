@@ -1541,5 +1541,59 @@ def autoresearch(run_id: str = "sweep-2026-07-11T203836", eval_split: str = "dev
     eval_split stays 'dev' until the deliberate one-shot 'test' pass. LAPTOP-SAFE:
     prefix with `modal run --detach` to survive closing the laptop --
         modal run --detach modal_app.py::autoresearch --eval-split dev
+    Read results afterwards with `autoresearch_show` (a detached run's return value
+    never reaches your local shell).
     """
     fit_autoresearch.remote(run_id, eval_split, layers, spec_json, seed)
+
+
+@app.function(image=image, volumes=VOLUMES, timeout=300)  # CPU-only, read-only
+def show_autoresearch(run_id: str = "sweep-2026-07-11T203836",
+                      eval_split: str = "dev") -> dict:
+    """Print the saved autoresearch leaderboard from the volume (D023).
+
+    Convenience reader for DETACHED `autoresearch` runs whose return value never
+    reached the local shell: loads
+    /artifacts/analysis/<run>/autoresearch_<split>.json and re-prints the ranked
+    candidate table. Read-only (no fitting, no commit). Results are CANDIDATES, not
+    claims; "circuit" language stays G2-gated (D020)."""
+    import json as _json
+
+    path = f"/artifacts/analysis/{run_id}/autoresearch_{eval_split}.json"
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f"{path} not found -- run "
+            f"`autoresearch --run-id {run_id} --eval-split {eval_split}` first")
+    with open(path) as f:
+        results = _json.load(f).get("results", [])
+
+    ranked = sorted([r for r in results if r.get("deltas")],
+                    key=lambda r: (r["deltas"].get("auroc") or -1), reverse=True)
+    print(f"run={run_id} split={eval_split}  frozen bar = preround_hardened (~0.73)")
+    print(f"{'candidate':>24} {'d_auroc':>9} {'beats_base':>11} {'beats_ctrl':>11} "
+          f"{'combined':>9}")
+    for r in ranked:
+        d = r["deltas"].get("auroc")
+        comb = r["combined"].get("auroc")
+        ds = f"{d:+.4f}" if d is not None else "n/a"
+        cs = f"{comb:.4f}" if comb is not None else "n/a"
+        print(f"{r['spec']['name']:>24} {ds:>9} {str(r['beats_baseline']):>11} "
+              f"{str(r['beats_controls']):>11} {cs:>9}")
+    for r in [r for r in results if not r.get("deltas")]:
+        nm = r.get("spec")
+        nm = nm if isinstance(nm, str) else (nm or {}).get("name", "?")
+        print(f"{nm:>24}  (skipped: {r.get('note', 'no result')})")
+    winners = [r["spec"]["name"] for r in ranked
+               if r["beats_baseline"] and r["beats_controls"]]
+    print("beats baseline+controls: "
+          + (", ".join(winners) if winners
+             else "NONE (seed library did not clear the pre-round bar)"))
+    return {"run": run_id, "eval": eval_split, "winners": winners,
+            "n_results": len(results)}
+
+
+@app.local_entrypoint()
+def autoresearch_show(run_id: str = "sweep-2026-07-11T203836",
+                      eval_split: str = "dev"):
+    """Print the saved autoresearch leaderboard (read-only; for detached runs)."""
+    show_autoresearch.remote(run_id, eval_split)
