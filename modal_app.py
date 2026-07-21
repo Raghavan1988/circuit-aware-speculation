@@ -1535,16 +1535,22 @@ def fit_autoresearch(run_id: str = "sweep-2026-07-11T203836",
         top = ranked[0]
         print(f"\ncost-ratio sweep (calibrated decision-regret), top candidate "
               f"'{top['spec']['name']}':")
-        print(f"{'cost_draft':>10} {'tau':>6} {'base_reg':>9} {'comb_reg':>9} "
-              f"{'d_reg':>9} {'helps':>6}")
+        print(f"{'cost_draft':>10} {'tau':>6} {'d_reg':>9} {'ci_lo':>9} "
+              f"{'ci_hi':>9} {'p>=0':>6} {'helps_ci':>8}")
         for s in top["regret_cost_sweep"]:
+            lo, hi = s.get("delta_ci_lo"), s.get("delta_ci_hi")
+            pg = s.get("p_delta_ge_0")
+            los = f"{lo:+.4f}" if lo is not None else "n/a"
+            his = f"{hi:+.4f}" if hi is not None else "n/a"
+            pgs = f"{pg:.3f}" if pg is not None else "n/a"
             print(f"{s['cost_draft']:>10.2f} {s['tau']:>6.3f} "
-                  f"{s['base_regret']:>9.4f} {s['combined_regret']:>9.4f} "
-                  f"{s['delta_regret']:>+9.4f} {str(s['helps']):>6}")
-        helped = [s["cost_draft"] for s in top["regret_cost_sweep"] if s["helps"]]
-        print("  helps at cost_draft: "
-              + (", ".join(f"{c:.2f}" for c in helped) if helped
-                 else "NONE across the grid"))
+                  f"{s['delta_regret']:>+9.4f} {los:>9} {his:>9} {pgs:>6} "
+                  f"{str(s.get('helps_ci')):>8}")
+        robust = [s["cost_draft"] for s in top["regret_cost_sweep"]
+                  if s.get("helps_ci")]
+        print("  helps with 95% CI < 0 at cost_draft: "
+              + (", ".join(f"{c:.2f}" for c in robust) if robust
+                 else "NONE (no cost where the reduction is CI-robust)"))
     winners = [r["spec"]["name"] for r in ranked
                if r["beats_baseline"] and r["beats_controls"]]
     print("beats baseline+controls: "
@@ -1623,16 +1629,22 @@ def show_autoresearch(run_id: str = "sweep-2026-07-11T203836",
         top = ranked[0]
         print(f"\ncost-ratio sweep (calibrated decision-regret), top candidate "
               f"'{top['spec']['name']}':")
-        print(f"{'cost_draft':>10} {'tau':>6} {'base_reg':>9} {'comb_reg':>9} "
-              f"{'d_reg':>9} {'helps':>6}")
+        print(f"{'cost_draft':>10} {'tau':>6} {'d_reg':>9} {'ci_lo':>9} "
+              f"{'ci_hi':>9} {'p>=0':>6} {'helps_ci':>8}")
         for s in top["regret_cost_sweep"]:
+            lo, hi = s.get("delta_ci_lo"), s.get("delta_ci_hi")
+            pg = s.get("p_delta_ge_0")
+            los = f"{lo:+.4f}" if lo is not None else "n/a"
+            his = f"{hi:+.4f}" if hi is not None else "n/a"
+            pgs = f"{pg:.3f}" if pg is not None else "n/a"
             print(f"{s['cost_draft']:>10.2f} {s['tau']:>6.3f} "
-                  f"{s['base_regret']:>9.4f} {s['combined_regret']:>9.4f} "
-                  f"{s['delta_regret']:>+9.4f} {str(s['helps']):>6}")
-        helped = [s["cost_draft"] for s in top["regret_cost_sweep"] if s["helps"]]
-        print("  helps at cost_draft: "
-              + (", ".join(f"{c:.2f}" for c in helped) if helped
-                 else "NONE across the grid"))
+                  f"{s['delta_regret']:>+9.4f} {los:>9} {his:>9} {pgs:>6} "
+                  f"{str(s.get('helps_ci')):>8}")
+        robust = [s["cost_draft"] for s in top["regret_cost_sweep"]
+                  if s.get("helps_ci")]
+        print("  helps with 95% CI < 0 at cost_draft: "
+              + (", ".join(f"{c:.2f}" for c in robust) if robust
+                 else "NONE (no cost where the reduction is CI-robust)"))
     winners = [r["spec"]["name"] for r in ranked
                if r["beats_baseline"] and r["beats_controls"]]
     print("beats baseline+controls: "
