@@ -114,20 +114,20 @@ def test_recalibration_preserves_auroc_and_reduces_ece():
     from cas.autoresearch.eval import _calibrate_oof, _ece
 
     rng = np.random.default_rng(DATA_SEED)
-    groups, n = _grouped(n_groups=40, rows_per=15)
-    y = (rng.random(n) < 0.5).astype(int)
-    # Well-RANKED but OVERCONFIDENT scores: monotone in a latent that tracks y,
-    # then pushed toward 0/1 so the probabilities are deliberately miscalibrated.
-    base_p = np.clip(0.5 + 0.4 * (2 * y - 1) * rng.uniform(0.0, 1.0, n)
-                     + 0.12 * rng.standard_normal(n), 1e-3, 1 - 1e-3)
-    over = np.clip((base_p - 0.5) * 3.0 + 0.5, 1e-3, 1 - 1e-3)  # overconfident, monotone
+    n = 4000
+    true_p = rng.uniform(0.05, 0.95, n)                  # well-calibrated ground truth
+    y = (rng.random(n) < true_p).astype(int)
+    # logit-AFFINE overconfidence: ranking intact but probabilities miscalibrated.
+    # Platt (a logistic on logit(over)) can invert a logit-affine distortion, so it
+    # recovers ~true_p -> a strict, deterministic ECE reduction.
+    over = 1.0 / (1.0 + np.exp(-(2.2 * np.log(true_p / (1.0 - true_p)) + 0.4)))
 
-    cal = _calibrate_oof(over, y, groups, seed=SEED)
+    cal = _calibrate_oof(over, y, seed=SEED)
 
-    # Platt is monotonic -> ranking (AUROC) preserved (barring clip-induced ties).
+    # Global Platt is monotone -> AUROC preserved exactly.
     assert abs(roc_auc_score(y, cal) - roc_auc_score(y, over)) < 1e-6
-    # Recalibrating a deliberately-overconfident input must not worsen ECE.
-    assert _ece(y, cal) <= _ece(y, over) + 1e-9
+    # It inverts the logit-affine miscalibration -> ECE strictly reduced.
+    assert _ece(y, cal) < _ece(y, over)
 
 
 def test_incremental_lift_exposes_calibrated_decision_metrics():
