@@ -172,5 +172,43 @@ def test_regret_cost_sweep_monotone_tau_and_flags_help():
     assert any(s["helps"] for s in sweep)
 
 
+def test_regret_vec_matches_scalar_and_ci_flags_are_consistent():
+    from cas.autoresearch.eval import (COST_GRID, _regret_sweep_ci, _regret_vec,
+                                       decision_regret)
+
+    rng = np.random.default_rng(DATA_SEED)
+    groups, n = _grouped(n_groups=40, rows_per=15)
+    y = (rng.random(n) < 0.6).astype(int)
+    p = np.clip(0.5 + (2 * y - 1) * 0.25 + 0.1 * rng.standard_normal(n), 0.01, 0.99)
+
+    # vectorized regret must equal the scalar decision_regret at every cost
+    vec = _regret_vec(y, p, np.asarray(COST_GRID))
+    for c, v in zip(COST_GRID, vec):
+        assert abs(float(v) - decision_regret(y, p, cost_draft=c)) < 1e-9
+
+    # CI structure: lo<=hi, helps_ci iff the 95% CI is entirely below 0, p in [0,1]
+    base_p = np.clip(0.6 + 0.02 * rng.standard_normal(n), 0.01, 0.99)  # ~flat baseline
+    ci = _regret_sweep_ci(y, base_p, p, groups, seed=SEED, n_boot=300)
+    assert len(ci) == len(COST_GRID)
+    for e in ci:
+        assert e["delta_ci_lo"] <= e["delta_ci_hi"]
+        assert e["helps_ci"] == (e["delta_ci_hi"] < 0.0)
+        assert 0.0 <= e["p_delta_ge_0"] <= 1.0
+
+
+def test_noninformative_candidate_is_not_ci_robust():
+    # A candidate equal to the baseline (zero ranking lift) must NOT show a
+    # CI-robust regret reduction at any cost -- this is the align/drift guard.
+    rng = np.random.default_rng(DATA_SEED)
+    groups, n = _grouped(n_groups=40, rows_per=15)
+    y = (rng.random(n) < 0.6).astype(int)
+    base_p = np.clip(0.6 + 0.05 * rng.standard_normal(n), 0.01, 0.99)
+    comb_p = base_p.copy()                               # identical -> no real help
+
+    from cas.autoresearch.eval import _regret_sweep_ci
+    ci = _regret_sweep_ci(y, base_p, comb_p, groups, seed=SEED, n_boot=300)
+    assert not any(e["helps_ci"] for e in ci)            # zero delta -> never CI-robust
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
