@@ -80,6 +80,36 @@ def decision_regret(y, p, cost_draft=0.1, reward_accept=1.0, tau=None) -> float:
     return float(np.mean(oracle - realized))
 
 
+# Draft-cost grid for the regret sweep: cost of one wasted draft token relative to
+# reward_accept=1.0. 0.1 is the harness price (draft ~0.1x verify); the grid spans
+# cheap->expensive so we can see whether a candidate's ranking lift EVER converts
+# to a decision advantage as the skip/draft threshold tau=cost/(cost+1) moves off
+# the degenerate "always draft" regime (D023; CLAIMS_LEDGER cost-sensitivity note).
+COST_GRID = (0.05, 0.1, 0.2, 0.3, 0.5, 1.0, 2.0, 4.0, 9.0)
+
+
+def regret_cost_sweep(y, base_p, comb_p, costs=COST_GRID) -> list:
+    """Calibrated decision-regret of base vs combined across draft costs.
+
+    Pure post-hoc on already-calibrated probabilities (no refitting). For each
+    ``cost_draft`` the threshold is ``tau = cost/(cost+1)``. Returns per cost:
+    {cost_draft, tau, base_regret, combined_regret, delta_regret (comb-base),
+    helps (delta < -1e-6)}. Still a COARSE proxy — wall-clock is authoritative
+    (G3) — but it answers the decisive systems question: does the candidate's
+    ranking lift reduce decision regret at ANY cost ratio, or only in a regime
+    where every model makes the same call?
+    """
+    out = []
+    for c in costs:
+        br = decision_regret(y, base_p, cost_draft=c)
+        cr = decision_regret(y, comb_p, cost_draft=c)
+        out.append({"cost_draft": float(c), "tau": float(c / (c + 1.0)),
+                    "base_regret": br, "combined_regret": cr,
+                    "delta_regret": float(cr - br),
+                    "helps": bool(cr < br - 1e-6)})
+    return out
+
+
 def _fit_oof(X, y, groups, seed=0, n_splits=5) -> np.ndarray:
     """Prompt-grouped out-of-fold acceptance probabilities.
 
@@ -273,6 +303,9 @@ def incremental_lift(X_base, X_cand, y, groups, seed=0, n_splits=5,
     cal = {k: _calibrate_oof(oof[k], y, seed=seed)
            for k in ("base", "combined")}
     cal_models = {k: _metrics(y, v) for k, v in cal.items()}
+    # Decisive systems check: does the ranking lift reduce decision regret at ANY
+    # draft-cost ratio, or only where every model makes the same "always draft" call?
+    reg_sweep = regret_cost_sweep(y, cal["base"], cal["combined"])
 
     def _cdelta(metric):
         a, b = cal_models["combined"][metric], cal_models["base"][metric]
