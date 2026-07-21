@@ -110,6 +110,68 @@ def regret_cost_sweep(y, base_p, comb_p, costs=COST_GRID) -> list:
     return out
 
 
+def _regret_vec(y, p, costs) -> np.ndarray:
+    """Vectorized ``decision_regret`` over a cost array for one (y, p).
+
+    Numerically identical to ``decision_regret`` computed per cost (draft iff
+    p >= tau=cost/(cost+1); accept:+1, reject:-cost; skip:0; regret = mean(y -
+    realized)), but evaluated for all costs at once — used by the bootstrap so the
+    grouped resampling stays cheap. Returns an array aligned to ``costs``.
+    """
+    y = np.asarray(y, dtype=float)
+    p = np.asarray(p, dtype=float)
+    costs = np.asarray(costs, dtype=float)
+    tau = costs / (costs + 1.0)                              # (C,)
+    draft = p[:, None] >= tau[None, :]                       # (n, C)
+    gain = np.where(y[:, None] >= 0.5, 1.0, -costs[None, :])  # accept:+1, reject:-cost
+    realized = np.where(draft, gain, 0.0)                    # skip -> 0
+    return (y[:, None] - realized).mean(axis=0)              # oracle(=y) - realized
+
+
+def _regret_sweep_ci(y, base_p, comb_p, groups, costs=COST_GRID, seed=0,
+                     n_boot=1000) -> list:
+    """Prompt-grouped bootstrap CI on the (combined - base) regret delta per cost.
+
+    Resamples GROUPS (prompt ids) with replacement — never rows, which are
+    dependent within a prompt (AGENTS.md) — and recomputes both regrets on the
+    SAME resampled rows, holding the calibrated probabilities fixed. This mirrors
+    the AUROC bootstrap exactly: it captures evaluation-set / prompt sampling
+    variability, answering "is the regret reduction robust to which prompts we
+    scored?" (It does NOT capture fit/calibration variability — neither does the
+    AUROC bootstrap; the shared global calibrator largely cancels in the delta.)
+
+    Returns per cost: {cost_draft, delta_ci_lo, delta_ci_hi, p_delta_ge_0 (the
+    probability of NO help — Δ>=0), helps_ci (95% CI entirely below 0), n_boot}.
+    Deterministic via ``np.random.default_rng(seed)``.
+    """
+    y = np.asarray(y)
+    base_p = np.asarray(base_p, dtype=float)
+    comb_p = np.asarray(comb_p, dtype=float)
+    groups = np.asarray(groups)
+    costs = np.asarray(costs, dtype=float)
+
+    uniq = np.unique(groups)
+    idx_by_group = {g: np.where(groups == g)[0] for g in uniq}
+    rng = np.random.default_rng(seed)
+
+    deltas = []
+    for _ in range(n_boot):
+        pick = rng.choice(uniq, size=len(uniq), replace=True)
+        rows = np.concatenate([idx_by_group[g] for g in pick])
+        yb = y[rows]
+        deltas.append(_regret_vec(yb, comb_p[rows], costs)
+                      - _regret_vec(yb, base_p[rows], costs))
+    D = np.asarray(deltas, dtype=float)                      # (n_boot, C)
+    lo = np.percentile(D, 2.5, axis=0)
+    hi = np.percentile(D, 97.5, axis=0)
+    pge0 = np.mean(D >= 0.0, axis=0)
+    return [{"cost_draft": float(costs[i]),
+             "delta_ci_lo": float(lo[i]), "delta_ci_hi": float(hi[i]),
+             "p_delta_ge_0": float(pge0[i]),
+             "helps_ci": bool(hi[i] < 0.0),
+             "n_boot": int(D.shape[0])} for i in range(len(costs))]
+
+
 def _fit_oof(X, y, groups, seed=0, n_splits=5) -> np.ndarray:
     """Prompt-grouped out-of-fold acceptance probabilities.
 
@@ -305,7 +367,14 @@ def incremental_lift(X_base, X_cand, y, groups, seed=0, n_splits=5,
     cal_models = {k: _metrics(y, v) for k, v in cal.items()}
     # Decisive systems check: does the ranking lift reduce decision regret at ANY
     # draft-cost ratio, or only where every model makes the same "always draft" call?
+    # Point estimate + prompt-grouped bootstrap CI (so a real reduction is told
+    # from threshold noise -- a non-informative candidate must NOT show helps_ci).
     reg_sweep = regret_cost_sweep(y, cal["base"], cal["combined"])
+    reg_ci = _regret_sweep_ci(y, cal["base"], cal["combined"], groups,
+                              seed=seed, n_boot=n_boot)
+    for s, ci in zip(reg_sweep, reg_ci):
+        s.update({"delta_ci_lo": ci["delta_ci_lo"], "delta_ci_hi": ci["delta_ci_hi"],
+                  "p_delta_ge_0": ci["p_delta_ge_0"], "helps_ci": ci["helps_ci"]})
 
     def _cdelta(metric):
         a, b = cal_models["combined"][metric], cal_models["base"][metric]
@@ -344,6 +413,7 @@ def incremental_lift(X_base, X_cand, y, groups, seed=0, n_splits=5,
             cal_models["combined"]["regret"] < cal_models["base"]["regret"] - 1e-6),
         "regret_cost_sweep": reg_sweep,
         "helps_at_any_cost": bool(any(s["helps"] for s in reg_sweep)),
+        "helps_at_any_cost_ci": bool(any(s["helps_ci"] for s in reg_sweep)),
         "n": int(n),
         "pos_rate": float(np.mean(y)),
         "n_features_base": int(n_feat_base),
