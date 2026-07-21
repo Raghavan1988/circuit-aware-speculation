@@ -1665,3 +1665,102 @@ def autoresearch_show(run_id: str = "sweep-2026-07-11T203836",
                       eval_split: str = "dev"):
     """Print the saved autoresearch leaderboard (read-only; for detached runs)."""
     show_autoresearch.remote(run_id, eval_split)
+
+
+@app.function(image=image, gpu=GPU, volumes=VOLUMES, timeout=3600, secrets=[hf_secret])
+def g3_overhead(context_len: int = 256, draft_len: int = 8, reps: int = 50,
+                warmup: int = 10) -> dict:
+    """G3 marginal-cost microbenchmark for the raw_frontier pre-round signal (D023).
+
+    The pre-round signal is a byproduct of the verify pass that already runs: read
+    the target frontier residual stream at DEFAULT_LAYERS, then apply a linear
+    probe. This measures its MARGINAL wall-clock cost against a decode round -- the
+    necessary condition for a controller win (G3): the signal must cost far less
+    than it can save (the CI-robust regret reduction is ~6% at cost_draft>=1;
+    docs/autoresearch_outcomes.md §4). Device-synchronized (cost.py / D021).
+
+    Eager bf16 (D014): absolute latency is relative, but the FRACTION is the honest
+    quantity. Two conservatisms make this an UPPER BOUND on the real overhead:
+    (1) output_hidden_states materializes ALL layers, not just the 4 hooked ones;
+    (2) forwards are prefill-style over `context_len` (no KV cache), charging the
+    materialization over more positions than a cached decode step. If even this
+    upper bound is small, the signal is cheap. A KV-cache decode-step benchmark is
+    the refinement.
+    """
+    import json
+    import os
+
+    import torch
+
+    from cas.autoresearch.cost import bench_feature_torch, cost_verdict
+    from cas.capture import DEFAULT_LAYERS
+    from cas.config import EngineConfig
+    from cas.models import load_pair
+
+    torch.set_grad_enabled(False)
+    pair = load_pair(EngineConfig())
+    target, draft, dev = pair.target, pair.draft, pair.device
+    vocab = int(target.config.vocab_size)
+    d_model = int(target.config.hidden_size)
+    ids = torch.randint(0, vocab, (1, context_len), device=dev)
+
+    t_verify = bench_feature_torch(
+        lambda s: target(input_ids=s, use_cache=False).logits, ids,
+        repeats=reps, warmup=warmup)
+    t_verify_hs = bench_feature_torch(
+        lambda s: target(input_ids=s, use_cache=False,
+                         output_hidden_states=True).hidden_states[-1], ids,
+        repeats=reps, warmup=warmup)
+    t_draft = bench_feature_torch(
+        lambda s: draft(input_ids=s, use_cache=False).logits, ids,
+        repeats=reps, warmup=warmup)
+
+    # probe inference: raw_frontier feature = len(DEFAULT_LAYERS) x d_model concat;
+    # the probe is one logistic dot product over that vector.
+    feat = torch.randn(len(DEFAULT_LAYERS) * d_model, device=dev)
+    w = torch.randn_like(feat)
+    t_probe = bench_feature_torch(lambda x: (x * w).sum(), feat,
+                                  repeats=reps, warmup=warmup)
+
+    v, vhs = t_verify["median_ns"], t_verify_hs["median_ns"]
+    dr, pr = t_draft["median_ns"], t_probe["median_ns"]
+    hs_overhead = max(0.0, vhs - v)             # frontier-layer materialization (upper bound)
+    signal_overhead = hs_overhead + pr          # per-round pre-round-signal cost
+    round_ns = draft_len * dr + vhs             # a length-`draft_len` round (verify materializes hs)
+    frac_round = signal_overhead / round_ns if round_ns else float("nan")
+    frac_verify = signal_overhead / v if v else float("nan")
+    # Necessary G3 condition: signal cost << the ~6% regret-proxy gain it enables.
+    verdict = cost_verdict({"median_ns": signal_overhead}, reference_ns=round_ns,
+                           near_zero_frac=0.06)
+
+    out = {"context_len": context_len, "draft_len": draft_len, "reps": reps,
+           "d_model": d_model, "n_layers": len(DEFAULT_LAYERS),
+           "verify_ns": v, "verify_hs_ns": vhs, "draft_ns": dr, "probe_ns": pr,
+           "hs_materialize_overhead_ns_upper": hs_overhead,
+           "signal_overhead_ns": signal_overhead, "round_ns": round_ns,
+           "signal_overhead_frac_round": frac_round,
+           "signal_overhead_frac_verify": frac_verify,
+           "near_zero_vs_regret_gain": verdict,
+           "note": "eager bf16, prefill-style, output_hidden_states=ALL layers -> "
+                   "conservative UPPER BOUND on the deployed 4-layer overhead"}
+    os.makedirs("/artifacts/analysis", exist_ok=True)
+    with open("/artifacts/analysis/g3_overhead.json", "w") as f:
+        json.dump(out, f, indent=2)
+    artifacts.commit()
+
+    print(json.dumps(out, indent=2))
+    print(f"\ndraft {dr/1e6:.2f} ms  verify {v/1e6:.2f} ms  verify+hs {vhs/1e6:.2f} ms "
+          f" probe {pr/1e3:.1f} us")
+    print(f"pre-round signal overhead = {signal_overhead/1e6:.3f} ms/round "
+          f"= {frac_round*100:.2f}% of a {draft_len}-token round "
+          f"({frac_verify*100:.2f}% of one verify)")
+    print(f"NEAR-ZERO vs the ~6% regret gain (necessary G3 condition): "
+          f"{verdict['is_near_zero']}  (overhead is {frac_round*100:.2f}% of a round)")
+    return out
+
+
+@app.local_entrypoint()
+def g3(context_len: int = 256, draft_len: int = 8, reps: int = 50):
+    """G3 marginal-cost microbenchmark for the pre-round signal (D023).
+    LAPTOP-SAFE: prefix with `modal run --detach`."""
+    g3_overhead.remote(context_len, draft_len, reps)
