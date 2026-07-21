@@ -172,15 +172,22 @@ def _regret_sweep_ci(y, base_p, comb_p, groups, costs=COST_GRID, seed=0,
              "n_boot": int(D.shape[0])} for i in range(len(costs))]
 
 
-def _fit_oof(X, y, groups, seed=0, n_splits=5) -> np.ndarray:
+def _fit_oof(X, y, groups, seed=0, n_splits=5, c_reg=1.0, max_iter=5000) -> np.ndarray:
     """Prompt-grouped out-of-fold acceptance probabilities.
 
     Mirrors the proven pattern in ``scripts/fit_probes.py`` /
     ``scripts/fit_baselines.py``: ``GroupKFold``, ``StandardScaler`` fit on the
-    train fold only, ``LogisticRegression(max_iter=2000, C=1.0)``. ``n_splits``
-    is clamped to the number of distinct groups. A train fold that is
-    single-class cannot fit a classifier; that fold falls back to the constant
+    train fold only, ``LogisticRegression``. ``n_splits`` is clamped to the number
+    of distinct groups. A single-class train fold falls back to the constant
     train-prior probability (graceful, deterministic).
+
+    ``c_reg`` is the inverse-L2 strength (sklearn ``C``). For a high-dimensional
+    probe (raw = 14336 features over ~4k train rows) ``C=1.0`` is under-regularized:
+    lbfgs may not converge within ``max_iter``, and a non-converged iterate depends
+    on BLAS thread-order, so the AUROC wobbles run-to-run (docs/autoresearch_outcomes.md
+    §6.2). A smaller ``c_reg`` (stronger L2) both regularizes appropriately AND makes
+    the strictly-convex objective converge to its unique optimum -> the result is
+    thread-independent and reproducible. Prefer ``c_reg<=0.1`` for the stabilized runs.
     """
     from sklearn.linear_model import LogisticRegression
     from sklearn.model_selection import GroupKFold
@@ -203,7 +210,7 @@ def _fit_oof(X, y, groups, seed=0, n_splits=5) -> np.ndarray:
             continue
         sc = StandardScaler().fit(X[tr])
         Xtr, Xte = sc.transform(X[tr]), sc.transform(X[te])
-        clf = LogisticRegression(max_iter=2000, C=1.0, random_state=seed)
+        clf = LogisticRegression(max_iter=max_iter, C=c_reg, random_state=seed)
         clf.fit(Xtr, y[tr])
         oof[te] = clf.predict_proba(Xte)[:, 1]
     return oof
@@ -441,7 +448,8 @@ LENGTH_KS = (1, 2, 4, 6, 8)
 
 
 def length_probe_lift(X_base, X_cand, accepted_len, groups, ks=LENGTH_KS,
-                      seed=0, n_splits=5, n_boot=1000, min_class=20) -> dict:
+                      seed=0, n_splits=5, n_boot=1000, min_class=20,
+                      c_reg=1.0) -> dict:
     """Fit one probe per accepted-length threshold k: P(accepted_len >= k | x).
 
     Under exact-match greedy the accepted prefix is contiguous, so
@@ -471,7 +479,7 @@ def length_probe_lift(X_base, X_cand, accepted_len, groups, ks=LENGTH_KS,
     d_comb = np.hstack([X_base, X_cand])
     d_ctrl = np.hstack([X_base, R])
 
-    per_k, survival = {}, {}
+    per_k, survival, surv_oof = {}, {}, {}
     for k in ks:
         y = (a >= k).astype(int)
         survival[int(k)] = float(y.mean())
@@ -480,13 +488,16 @@ def length_probe_lift(X_base, X_cand, accepted_len, groups, ks=LENGTH_KS,
             per_k[int(k)] = {"note": "insufficient class balance",
                              "pos_rate": float(y.mean())}
             continue
-        ob = _fit_oof(d_base, y, groups, seed=seed, n_splits=n_splits)
-        oc = _fit_oof(d_comb, y, groups, seed=seed, n_splits=n_splits)
-        orr = _fit_oof(d_ctrl, y, groups, seed=seed, n_splits=n_splits)
+        ob = _fit_oof(d_base, y, groups, seed=seed, n_splits=n_splits, c_reg=c_reg)
+        oc = _fit_oof(d_comb, y, groups, seed=seed, n_splits=n_splits, c_reg=c_reg)
+        orr = _fit_oof(d_ctrl, y, groups, seed=seed, n_splits=n_splits, c_reg=c_reg)
         mb, mc, mr = _metrics(y, ob), _metrics(y, oc), _metrics(y, orr)
         ci = _group_bootstrap_delta(y, ob, oc, groups, seed=seed, n_boot=n_boot)
-        cal_b_ece = _metrics(y, _calibrate_oof(ob, y, seed=seed))["ece"]
-        cal_c_ece = _metrics(y, _calibrate_oof(oc, y, seed=seed))["ece"]
+        cal_b = _calibrate_oof(ob, y, seed=seed)     # calibrated survival Ŝ_k, base
+        cal_c = _calibrate_oof(oc, y, seed=seed)     # calibrated survival Ŝ_k, combined
+        surv_oof[int(k)] = {"base": cal_b, "combined": cal_c}   # for length_payoff
+        cal_b_ece = _metrics(y, cal_b)["ece"]
+        cal_c_ece = _metrics(y, cal_c)["ece"]
         d_auroc = (None if mc["auroc"] is None or mb["auroc"] is None
                    else float(mc["auroc"] - mb["auroc"]))
         per_k[int(k)] = {
@@ -503,4 +514,102 @@ def length_probe_lift(X_base, X_cand, accepted_len, groups, ks=LENGTH_KS,
             "base_cal_ece": cal_b_ece, "combined_cal_ece": cal_c_ece,
         }
     return {"ks": [int(k) for k in ks], "per_k": per_k,
-            "empirical_survival": survival, "n": int(len(a))}
+            "empirical_survival": survival, "n": int(len(a)),
+            "surv_oof": surv_oof}       # calibrated Ŝ_k arrays for length_payoff (Tier-2)
+
+
+def _interp_survival(surv_dict, ks, all_k) -> "np.ndarray":
+    """Per-row survival interpolated from grid ``ks`` to integer thresholds
+    ``all_k``, then enforced monotone non-increasing (the K probes are fit
+    independently, so raw calibrated S_k need not be monotone). Returns
+    ``(n, len(all_k))``."""
+    ks_sorted = sorted(int(k) for k in ks)
+    S = np.stack([np.asarray(surv_dict[k], dtype=float) for k in ks_sorted], axis=1)
+    ks_arr = np.asarray(ks_sorted, dtype=float)
+    out = np.empty((S.shape[0], len(all_k)), dtype=float)
+    for j, kk in enumerate(all_k):
+        if kk <= ks_arr[0]:
+            out[:, j] = S[:, 0]
+        elif kk >= ks_arr[-1]:
+            out[:, j] = S[:, -1]
+        else:
+            hi = int(np.searchsorted(ks_arr, kk))
+            lo = hi - 1
+            w = (kk - ks_arr[lo]) / (ks_arr[hi] - ks_arr[lo])
+            out[:, j] = (1.0 - w) * S[:, lo] + w * S[:, hi]
+    return np.minimum.accumulate(out, axis=1)      # survival is non-increasing in k
+
+
+def length_payoff(surv_base, surv_comb, accepted_len, groups, ks=LENGTH_KS,
+                  costs=COST_GRID, seed=0, n_boot=1000) -> list:
+    """Length-aware controller payoff (Tier-2): choose the proposal length L from a
+    predicted survival curve, and measure realized-throughput regret vs a
+    clairvoyant oracle across draft costs. Compares a controller driven by the
+    CANDIDATE's survival (combined) against one driven by the frozen baseline
+    (base) and the best fixed action.
+
+    Model (verify = 1 time unit; a drafted token costs ``cost_draft``): action L
+    emits ``1 + min(A, L)`` tokens (accepted prefix + bonus) at cost
+    ``1 + cost_draft*L``, so throughput = ``(1 + min(A,L)) / (1 + cost_draft*L)``. A
+    controller picks L maximizing EXPECTED throughput from the predicted survival
+    (``E[min(A,L)] = sum_{j<=L} S_j``); realized throughput uses the true A. Actions
+    = skip(0) + ``ks``. Returns per cost: regret of base / combined / best-fixed vs
+    oracle, the (combined - base) regret delta with a prompt-grouped bootstrap CI
+    (``helps_ci`` = CI entirely below 0), and the mean chosen length. This is the
+    length decision the compute-optimal controller (I14) actually makes; still a
+    coarse proxy -- wall-clock is authoritative (G3).
+    """
+    a = np.asarray(accepted_len, dtype=float)
+    groups = np.asarray(groups)
+    max_k = int(max(int(k) for k in ks))
+    all_k = list(range(1, max_k + 1))
+    csum_b = np.cumsum(_interp_survival(surv_base, ks, all_k), axis=1)   # E[min(A,j)] base
+    csum_c = np.cumsum(_interp_survival(surv_comb, ks, all_k), axis=1)   # combined
+    actions = [0] + sorted(int(k) for k in ks)
+    idx = {L: i for i, L in enumerate(actions)}
+    ones = np.ones(len(a))
+
+    def _pred_emit(csum, L):
+        return ones if L == 0 else 1.0 + csum[:, L - 1]
+
+    uniq = np.unique(groups)
+    idx_by_g = {g: np.where(groups == g)[0] for g in uniq}
+    rng = np.random.default_rng(seed)
+    boot_rows = [np.concatenate([idx_by_g[g]
+                                 for g in rng.choice(uniq, len(uniq), replace=True)])
+                 for _ in range(n_boot)]
+
+    out = []
+    for c in costs:
+        cost_L = np.array([1.0 + c * L for L in actions])            # (nA,)
+        pe_b = np.stack([_pred_emit(csum_b, L) for L in actions], axis=1)
+        pe_c = np.stack([_pred_emit(csum_c, L) for L in actions], axis=1)
+        Lb = np.array(actions)[np.argmax(pe_b / cost_L[None, :], axis=1)]
+        Lc = np.array(actions)[np.argmax(pe_c / cost_L[None, :], axis=1)]
+        real_emit = np.stack([1.0 + np.minimum(a, L) for L in actions], axis=1)
+        real_tp = real_emit / cost_L[None, :]                        # (n, nA)
+        rt_oracle = real_tp.max(axis=1)
+        rows = np.arange(len(a))
+        rt_b = real_tp[rows, [idx[L] for L in Lb]]
+        rt_c = real_tp[rows, [idx[L] for L in Lc]]
+        Lfix = actions[int(np.argmax(real_tp.mean(axis=0)))]
+        rt_fix = real_tp[:, idx[Lfix]]
+        reg_o_b = rt_oracle - rt_b
+        reg_o_c = rt_oracle - rt_c
+        boot = np.array([float(np.mean(reg_o_c[r]) - np.mean(reg_o_b[r]))
+                         for r in boot_rows])
+        out.append({
+            "cost_draft": float(c), "tau": float(c / (c + 1.0)),
+            "regret_base": float(np.mean(reg_o_b)),
+            "regret_combined": float(np.mean(reg_o_c)),
+            "regret_best_fixed": float(np.mean(rt_oracle - rt_fix)),
+            "best_fixed_action": int(Lfix),
+            "delta_regret": float(np.mean(reg_o_c) - np.mean(reg_o_b)),
+            "delta_ci_lo": float(np.percentile(boot, 2.5)),
+            "delta_ci_hi": float(np.percentile(boot, 97.5)),
+            "p_delta_ge_0": float(np.mean(boot >= 0.0)),
+            "helps_ci": bool(np.percentile(boot, 97.5) < 0.0),
+            "mean_len_base": float(np.mean(Lb)),
+            "mean_len_combined": float(np.mean(Lc)),
+        })
+    return out
