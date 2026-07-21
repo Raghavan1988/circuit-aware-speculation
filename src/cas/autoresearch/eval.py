@@ -117,6 +117,39 @@ def _fit_oof(X, y, groups, seed=0, n_splits=5) -> np.ndarray:
     return oof
 
 
+def _calibrate_oof(oof, y, groups, seed=0, n_splits=5) -> np.ndarray:
+    """Prompt-grouped out-of-fold Platt recalibration of raw OOF probabilities.
+
+    Fits a 1-parameter logistic (Platt) on the LOG-ODDS of the raw OOF scores,
+    grouped and out-of-fold so the calibrator for any row never saw that row's
+    prompt (leakage-safe, D019). Platt is strictly monotonic, so AUROC/AUPRC are
+    preserved *exactly* — only Brier/ECE/regret change. This isolates whether a
+    candidate's ranking lift is decision-usable or merely a miscalibration
+    artifact of a high-dim probe. Returns calibrated probabilities aligned to
+    ``oof``. A single-class train fold falls back to the train prior.
+    """
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.model_selection import GroupKFold
+
+    y = np.asarray(y)
+    groups = np.asarray(groups)
+    s = np.clip(np.asarray(oof, dtype=float), 1e-6, 1.0 - 1e-6)
+    logit = np.log(s / (1.0 - s)).reshape(-1, 1)
+
+    cal = np.zeros(len(y), dtype=float)
+    n_groups = len(np.unique(groups))
+    splits = max(2, min(n_splits, n_groups))
+    gkf = GroupKFold(n_splits=splits)
+    for tr, te in gkf.split(logit, y, groups):
+        if len(np.unique(y[tr])) < 2:
+            cal[te] = float(np.mean(y[tr])) if len(tr) else 0.5
+            continue
+        lr = LogisticRegression(max_iter=1000, random_state=seed)
+        lr.fit(logit[tr], y[tr])
+        cal[te] = lr.predict_proba(logit[te])[:, 1]
+    return cal
+
+
 def _metrics(y, oof) -> dict:
     """Per-model score card: {auroc, auprc, brier, ece, regret}. AUROC/AUPRC are
     None if ``y`` is single-class (undefined); Brier/ECE/regret are always
@@ -238,6 +271,19 @@ def incremental_lift(X_base, X_cand, y, groups, seed=0, n_splits=5,
            for k, v in designs.items()}
     models = {k: _metrics(y, v) for k, v in oof.items()}
 
+    # Leakage-safe recalibration (Platt, prompt-grouped OOF) of base + combined.
+    # Monotonic -> AUROC/AUPRC preserved; recomputes Brier/ECE/regret so we can
+    # tell a decision-usable signal from a fixable high-dim miscalibration artifact
+    # (D023; RESEARCH_SPEC controller / mechanism-systems trade-off). Controls are
+    # AUROC-only checks, so they are not recalibrated.
+    cal = {k: _calibrate_oof(oof[k], y, groups, seed=seed, n_splits=n_splits)
+           for k in ("base", "combined")}
+    cal_models = {k: _metrics(y, v) for k, v in cal.items()}
+
+    def _cdelta(metric):
+        a, b = cal_models["combined"][metric], cal_models["base"][metric]
+        return None if (a is None or b is None) else float(a - b)
+
     def _delta(metric):
         a, b = models["combined"][metric], models["base"][metric]
         return None if (a is None or b is None) else float(a - b)
@@ -259,6 +305,16 @@ def incremental_lift(X_base, X_cand, y, groups, seed=0, n_splits=5,
         "beats_controls": bool(beats_controls),
         "delta_auroc_ci": _group_bootstrap_delta(
             y, oof["base"], oof["combined"], groups, seed=seed, n_boot=n_boot),
+        # Recalibrated (Platt OOF) decision metrics for base vs combined. AUROC/
+        # AUPRC in these blocks equal the raw ones (monotonic); Brier/ECE/regret
+        # are the post-calibration values. `helps_decision_calibrated` is the
+        # decision-usefulness verdict: lower regret than the calibrated baseline.
+        "base_calibrated": cal_models["base"],
+        "combined_calibrated": cal_models["combined"],
+        "deltas_calibrated": {"brier": _cdelta("brier"), "ece": _cdelta("ece"),
+                              "regret": _cdelta("regret")},
+        "helps_decision_calibrated": bool(
+            cal_models["combined"]["regret"] < cal_models["base"]["regret"] - 1e-6),
         "n": int(n),
         "pos_rate": float(np.mean(y)),
         "n_features_base": int(n_feat_base),
