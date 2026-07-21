@@ -232,5 +232,31 @@ def test_credible_systems_flag_is_conservative():
         assert res["auroc_ci_clean"] and res["n_ci_robust_costs"] >= 2
 
 
+def test_length_probe_lift_survival_monotone_and_lifts():
+    from cas.autoresearch.eval import LENGTH_KS, length_probe_lift
+
+    rng = np.random.default_rng(DATA_SEED)
+    groups, n = _grouped(n_groups=50, rows_per=20)
+    latent = rng.standard_normal(n)
+    # accepted_len in [0,8] driven by latent (higher latent -> longer prefix), so a
+    # feature carrying latent can predict the survival thresholds.
+    accepted_len = np.clip(np.round(3.5 + 2.0 * latent), 0, 8).astype(int)
+    X_base = rng.standard_normal((n, 3))                 # uninformative baseline
+    X_cand = (latent + 0.4 * rng.standard_normal(n)).reshape(-1, 1)  # informative
+
+    res = length_probe_lift(X_base, X_cand, accepted_len, groups,
+                            ks=LENGTH_KS, seed=SEED, n_boot=200)
+
+    assert res["ks"] == list(LENGTH_KS)
+    surv = [res["empirical_survival"][k] for k in LENGTH_KS]
+    assert all(surv[i] >= surv[i + 1] - 1e-9 for i in range(len(surv) - 1))  # monotone
+    # an informative candidate lifts AUROC for at least one fittable threshold
+    lifted = [k for k in LENGTH_KS
+              if isinstance(res["per_k"].get(k), dict)
+              and res["per_k"][k].get("delta_auroc") is not None
+              and res["per_k"][k]["delta_auroc"] > 0.0]
+    assert len(lifted) >= 1
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
