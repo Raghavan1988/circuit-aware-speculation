@@ -258,5 +258,36 @@ def test_length_probe_lift_survival_monotone_and_lifts():
     assert len(lifted) >= 1
 
 
+def test_length_payoff_controller_and_interp():
+    from cas.autoresearch.eval import (COST_GRID, LENGTH_KS, _interp_survival,
+                                       length_payoff)
+
+    rng = np.random.default_rng(DATA_SEED)
+    groups, n = _grouped(n_groups=40, rows_per=20)
+    accepted_len = rng.integers(0, 9, size=n)                # true A in [0,8]
+    ks = LENGTH_KS
+    # base survival = the MARGINAL P(A>=k) (constant per row -> a fixed policy);
+    # combined survival noisily tracks the true A (informative per row).
+    base = {int(k): np.full(n, float((accepted_len >= k).mean())) for k in ks}
+    comb = {int(k): np.clip((accepted_len >= k).astype(float)
+                            + 0.15 * rng.standard_normal(n), 0.01, 0.99) for k in ks}
+
+    # interpolation: shape + survival monotone non-increasing across integer k
+    S = _interp_survival(comb, ks, list(range(1, 9)))
+    assert S.shape == (n, 8)
+    assert np.all(S[:, :-1] >= S[:, 1:] - 1e-9)
+
+    pay = length_payoff(base, comb, accepted_len, groups, ks=ks, costs=COST_GRID,
+                        seed=SEED, n_boot=200)
+    assert len(pay) == len(COST_GRID)
+    for s in pay:
+        assert s["regret_base"] >= -1e-9 and s["regret_combined"] >= -1e-9
+        assert s["delta_ci_lo"] <= s["delta_ci_hi"]
+        assert s["helps_ci"] == (s["delta_ci_hi"] < 0.0)
+    # a near-perfect per-row survival should beat the marginal (fixed) baseline
+    # controller at some cost
+    assert any(s["helps_ci"] for s in pay)
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
