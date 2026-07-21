@@ -1764,3 +1764,70 @@ def g3(context_len: int = 256, draft_len: int = 8, reps: int = 50):
     """G3 marginal-cost microbenchmark for the pre-round signal (D023).
     LAPTOP-SAFE: prefix with `modal run --detach`."""
     g3_overhead.remote(context_len, draft_len, reps)
+
+
+@app.function(image=image, volumes=VOLUMES, timeout=4 * 3600)  # CPU-only
+def fit_autoresearch_length(run_id: str = "sweep-2026-07-11T203836",
+                            eval_split: str = "dev", layers: str = "6,12,18,24",
+                            ks: str = "1,2,4,6,8", seed: int = 0,
+                            n_boot: int = 500) -> dict:
+    """I23/D023 length-aware: per-accepted-length SURVIVAL probes -- one logistic
+    per k in `ks` predicting P(accepted_len >= k) from the target-frontier
+    representation vs the frozen baseline (prompt-grouped OOF, equal-capacity
+    control, prompt-grouped CI, calibrated ECE). The length ("how many tokens")
+    counterpart to the binary accept probe; k=1 == binary accept. CPU-only;
+    dev-only by default; results are CANDIDATES, not claims (G1/G2 gated by hand)."""
+    import json as _json
+
+    from cas.autoresearch.features import default_seed_specs
+    from scripts.fit_autoresearch import (_baseline_by_round, _load_frontier,
+                                          score_spec_length)
+
+    layer_t = tuple(int(x) for x in layers.split(","))
+    ks_t = tuple(int(x) for x in ks.split(","))
+    acts, meta = _load_frontier(f"/artifacts/probes/{run_id}", layer_t)
+    base_by_key = _baseline_by_round(f"/artifacts/traces/{run_id}")
+    specs = default_seed_specs(layer_t)
+    results = [score_spec_length(s, acts, meta, base_by_key, eval_split,
+                                 ks=ks_t, seed=seed, n_boot=n_boot) for s in specs]
+
+    os.makedirs(f"/artifacts/analysis/{run_id}", exist_ok=True)
+    outp = f"/artifacts/analysis/{run_id}/autoresearch_length_{eval_split}.json"
+    with open(outp, "w") as f:
+        _json.dump({"run": run_id, "eval": eval_split, "ks": list(ks_t),
+                    "results": results}, f, indent=2)
+    artifacts.commit()
+
+    scored = [r for r in results if r.get("per_k")]
+    scored.sort(key=lambda r: ((r["per_k"].get(1) or {}).get("delta_auroc") or -1),
+                reverse=True)
+    if scored:
+        top = scored[0]
+        print(f"run={run_id} split={eval_split}  per-length survival probes P(A>=k), "
+              f"top candidate '{top['spec']['name']}':")
+        print(f"{'k':>3} {'P(A>=k)':>9} {'base_auc':>9} {'comb_auc':>9} "
+              f"{'d_auroc':>9} {'ci_lo':>8} {'ci_hi':>8} {'beats_ctrl':>10}")
+        for k in top["ks"]:
+            p = top["per_k"].get(k) or {}
+            if p.get("delta_auroc") is None:
+                print(f"{k:>3}  (skipped: {p.get('note', 'n/a')})")
+                continue
+            ci = p.get("delta_auroc_ci") or {}
+            lo, hi = ci.get("lo"), ci.get("hi")
+            los = f"{lo:+.4f}" if lo is not None else "n/a"
+            his = f"{hi:+.4f}" if hi is not None else "n/a"
+            print(f"{k:>3} {p['pos_rate']:>9.3f} {p['base_auroc']:>9.4f} "
+                  f"{p['combined_auroc']:>9.4f} {p['delta_auroc']:>+9.4f} "
+                  f"{los:>8} {his:>8} {str(p['beats_control']):>10}")
+    return {"run": run_id, "eval": eval_split, "ks": list(ks_t),
+            "n_specs": len(results)}
+
+
+@app.local_entrypoint()
+def autoresearch_length(run_id: str = "sweep-2026-07-11T203836",
+                        eval_split: str = "dev", layers: str = "6,12,18,24",
+                        ks: str = "1,2,4,6,8", seed: int = 0, n_boot: int = 500):
+    """Per-length survival probes P(accepted_len>=k) (D023). LAPTOP-SAFE: prefix
+    with `modal run --detach`; read results with autoresearch_show is binary-only,
+    so pull the length JSON from /artifacts/analysis/<run>/autoresearch_length_*.json."""
+    fit_autoresearch_length.remote(run_id, eval_split, layers, ks, seed, n_boot)
