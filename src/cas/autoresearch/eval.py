@@ -433,3 +433,74 @@ def incremental_lift(X_base, X_cand, y, groups, seed=0, n_splits=5,
         "n_features_cand": int(n_feat_cand),
     })
     return out
+
+
+# Accepted-length thresholds for the per-length survival probes. These mirror the
+# contract's candidate proposal lengths; k=1 == the binary accept event.
+LENGTH_KS = (1, 2, 4, 6, 8)
+
+
+def length_probe_lift(X_base, X_cand, accepted_len, groups, ks=LENGTH_KS,
+                      seed=0, n_splits=5, n_boot=1000, min_class=20) -> dict:
+    """Fit one probe per accepted-length threshold k: P(accepted_len >= k | x).
+
+    Under exact-match greedy the accepted prefix is contiguous, so
+    ``y_k = (accepted_len >= k)`` is the counterfactual **survival** label for
+    drafting k tokens (D018/D019 counterfactual full-information labels): "would
+    action L=k be fully accepted?". These K probes are the discrete survival curve
+    S_k = P(A >= k | x); the length-aware ("how many tokens") counterpart to the
+    single binary accept probe (k=1). For each k the frozen baseline and
+    baseline+candidate are fit under prompt-grouped OOF with an equal-capacity
+    random control; we report the incremental AUROC lift + prompt-grouped CI +
+    calibrated ECE, plus the empirical survival rate P(A>=k). Reuses the same
+    leakage-safe machinery as ``incremental_lift`` (no new statistics). k with too
+    few of either class (< ``min_class``) are skipped with a note.
+    """
+    X_base = np.asarray(X_base, dtype=float)
+    X_cand = np.asarray(X_cand, dtype=float)
+    if X_base.ndim == 1:
+        X_base = X_base.reshape(-1, 1)
+    if X_cand.ndim == 1:
+        X_cand = X_cand.reshape(-1, 1)
+    a = np.asarray(accepted_len)
+    groups = np.asarray(groups)
+
+    rng = np.random.default_rng(seed)
+    R = rng.standard_normal(size=X_cand.shape)          # equal-capacity control
+    d_base = X_base
+    d_comb = np.hstack([X_base, X_cand])
+    d_ctrl = np.hstack([X_base, R])
+
+    per_k, survival = {}, {}
+    for k in ks:
+        y = (a >= k).astype(int)
+        survival[int(k)] = float(y.mean())
+        if (len(np.unique(y)) < 2 or int(y.sum()) < min_class
+                or int((1 - y).sum()) < min_class):
+            per_k[int(k)] = {"note": "insufficient class balance",
+                             "pos_rate": float(y.mean())}
+            continue
+        ob = _fit_oof(d_base, y, groups, seed=seed, n_splits=n_splits)
+        oc = _fit_oof(d_comb, y, groups, seed=seed, n_splits=n_splits)
+        orr = _fit_oof(d_ctrl, y, groups, seed=seed, n_splits=n_splits)
+        mb, mc, mr = _metrics(y, ob), _metrics(y, oc), _metrics(y, orr)
+        ci = _group_bootstrap_delta(y, ob, oc, groups, seed=seed, n_boot=n_boot)
+        cal_b_ece = _metrics(y, _calibrate_oof(ob, y, seed=seed))["ece"]
+        cal_c_ece = _metrics(y, _calibrate_oof(oc, y, seed=seed))["ece"]
+        d_auroc = (None if mc["auroc"] is None or mb["auroc"] is None
+                   else float(mc["auroc"] - mb["auroc"]))
+        per_k[int(k)] = {
+            "pos_rate": float(y.mean()),
+            "base_auroc": mb["auroc"], "combined_auroc": mc["auroc"],
+            "control_random_auroc": mr["auroc"],
+            "delta_auroc": d_auroc, "delta_auroc_ci": ci,
+            "beats_baseline": bool(mc["auroc"] is not None and mb["auroc"] is not None
+                                   and mc["auroc"] > mb["auroc"] + 1e-4),
+            "beats_control": bool(mc["auroc"] is not None and mr["auroc"] is not None
+                                  and mc["auroc"] > mr["auroc"] + 1e-4),
+            "auroc_ci_clean": bool(ci.get("p_delta_le_0") is not None
+                                   and ci["p_delta_le_0"] < 0.05),
+            "base_cal_ece": cal_b_ece, "combined_cal_ece": cal_c_ece,
+        }
+    return {"ks": [int(k) for k in ks], "per_k": per_k,
+            "empirical_survival": survival, "n": int(len(a))}
