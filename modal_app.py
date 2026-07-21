@@ -1531,6 +1531,20 @@ def fit_autoresearch(run_id: str = "sweep-2026-07-11T203836",
         drs = f"{dreg:+.4f}" if dreg is not None else "n/a"
         print(f"{r['spec']['name']:>22} {ds:>8} {win:>4} {es:>8} {rs:>8} "
               f"{drs:>10} {str(r.get('helps_decision_calibrated')):>9}")
+    if ranked and ranked[0].get("regret_cost_sweep"):
+        top = ranked[0]
+        print(f"\ncost-ratio sweep (calibrated decision-regret), top candidate "
+              f"'{top['spec']['name']}':")
+        print(f"{'cost_draft':>10} {'tau':>6} {'base_reg':>9} {'comb_reg':>9} "
+              f"{'d_reg':>9} {'helps':>6}")
+        for s in top["regret_cost_sweep"]:
+            print(f"{s['cost_draft']:>10.2f} {s['tau']:>6.3f} "
+                  f"{s['base_regret']:>9.4f} {s['combined_regret']:>9.4f} "
+                  f"{s['delta_regret']:>+9.4f} {str(s['helps']):>6}")
+        helped = [s["cost_draft"] for s in top["regret_cost_sweep"] if s["helps"]]
+        print("  helps at cost_draft: "
+              + (", ".join(f"{c:.2f}" for c in helped) if helped
+                 else "NONE across the grid"))
     winners = [r["spec"]["name"] for r in ranked
                if r["beats_baseline"] and r["beats_controls"]]
     print("beats baseline+controls: "
@@ -1605,6 +1619,20 @@ def show_autoresearch(run_id: str = "sweep-2026-07-11T203836",
         nm = r.get("spec")
         nm = nm if isinstance(nm, str) else (nm or {}).get("name", "?")
         print(f"{nm:>24}  (skipped: {r.get('note', 'no result')})")
+    if ranked and ranked[0].get("regret_cost_sweep"):
+        top = ranked[0]
+        print(f"\ncost-ratio sweep (calibrated decision-regret), top candidate "
+              f"'{top['spec']['name']}':")
+        print(f"{'cost_draft':>10} {'tau':>6} {'base_reg':>9} {'comb_reg':>9} "
+              f"{'d_reg':>9} {'helps':>6}")
+        for s in top["regret_cost_sweep"]:
+            print(f"{s['cost_draft']:>10.2f} {s['tau']:>6.3f} "
+                  f"{s['base_regret']:>9.4f} {s['combined_regret']:>9.4f} "
+                  f"{s['delta_regret']:>+9.4f} {str(s['helps']):>6}")
+        helped = [s["cost_draft"] for s in top["regret_cost_sweep"] if s["helps"]]
+        print("  helps at cost_draft: "
+              + (", ".join(f"{c:.2f}" for c in helped) if helped
+                 else "NONE across the grid"))
     winners = [r["spec"]["name"] for r in ranked
                if r["beats_baseline"] and r["beats_controls"]]
     print("beats baseline+controls: "

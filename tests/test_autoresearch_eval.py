@@ -150,5 +150,27 @@ def test_incremental_lift_exposes_calibrated_decision_metrics():
     assert 0.0 <= res["combined_calibrated"]["regret"] <= 1.0
 
 
+def test_regret_cost_sweep_monotone_tau_and_flags_help():
+    from cas.autoresearch.eval import COST_GRID, regret_cost_sweep
+
+    rng = np.random.default_rng(DATA_SEED)
+    n = 800
+    y = (rng.random(n) < 0.55).astype(int)
+    base_p = np.clip(0.55 + 0.05 * rng.standard_normal(n), 0.01, 0.99)   # ~uninformative
+    comb_p = np.clip(0.5 + (2 * y - 1) * 0.3 + 0.08 * rng.standard_normal(n),
+                     0.01, 0.99)                                          # informative
+
+    sweep = regret_cost_sweep(y, base_p, comb_p)
+
+    assert len(sweep) == len(COST_GRID)
+    taus = [s["tau"] for s in sweep]
+    assert taus == sorted(taus)                       # tau increases with cost
+    for s in sweep:
+        assert s["base_regret"] >= 0.0 and s["combined_regret"] >= 0.0
+        assert s["helps"] == (s["combined_regret"] < s["base_regret"] - 1e-6)
+    # an informative candidate must reduce regret at SOME cost ratio
+    assert any(s["helps"] for s in sweep)
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
