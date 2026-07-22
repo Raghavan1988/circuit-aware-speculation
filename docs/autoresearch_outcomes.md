@@ -11,14 +11,134 @@ signal / representation**, never a "circuit" or "mechanism", until interventions
 
 - **Split:** development only. The test split was captured but never fitted or
   selected on; it stays frozen.
-- **Model pair:** Qwen2.5-7B-Instruct target / Qwen2.5-0.5B-Instruct draft (v1).
-  No replication pair (v2 / Llama) run yet.
+- **Replication (done):** validated across **two model families** (Qwen, Llama) and
+  **two corpora** (v1 4-domain, v2 7-domain), **domain-controlled**, on
+  domain-balanced captures — see §1b. (An earlier capture-sampling bug limited every
+  capture to ~2 domains; fixed 2026-07-21 with domain-stratified round-robin
+  sampling, then re-captured and re-run.)
 - **Reproducibility (resolved):** the earlier run-to-run AUROC wobble came from an
   under-regularized (non-converged) 14k-feature fit. Fixed by stronger L2
   (`c_reg=0.1`), which converges the strictly-convex objective to its unique,
   thread-independent optimum. The firmed-up figures in §1a use `c_reg=0.1` and
   **supersede** the exploratory `c_reg=1.0` numbers in §2–§5; note proper
   regularization *raised* the lift (the old fit was overfit).
+
+## Current status — findings, blocking, next steps (2026-07-21)
+
+### Findings (validated)
+- **Pre-round first-token acceptance signal beyond entropy AND domain, replicated
+  3/3.** Domain-controlled baseline (`preround_hardened + domain`), on
+  domain-balanced captures: `raw_frontier` Δauroc **+0.072 (Qwen-v1), +0.112
+  (Qwen-v2, 7 domains), +0.069 (Llama)** — all CI-clean (p≤0=0). Two model families,
+  two corpora. See §1b.
+- **First-token only — does NOT extend to run-length.** Per-length survival probes
+  (3/3): the lift is strong + clean at k=1, then **null-to-harmful for k≥4** (worse
+  than entropy+domain at k=8 on v2/Llama, where domain already predicts long runs).
+  The Tier-2 length *controller* does not benefit and mostly hurts. See §1c.
+- **Near-zero deployed cost.** Signal = read cached frontier reps + a 16 µs probe =
+  **0.015% of a decode round** (§G3); materialization ~free on the eager path.
+- **Robust, not an artifact.** Survives 7-domain domain-control (not domain
+  identification); beats equal-capacity random/norm controls (not capacity);
+  Platt-calibrated (not a calibration artifact); reproducible at `c_reg=0.1`.
+- **Only the full representation works.** The cheap/deployable variants (align,
+  drift, norm, lowrank) show only small, inconsistent lift — the deployable-cheap
+  signal is marginal.
+- **Correlational, not causal.** No interventions yet → "diagnostic signal", never
+  "circuit" (D020 / G2).
+
+### Blocking (before submission)
+- **Frozen test pass.** Everything is dev-only; **C10 is `UNTESTED`** in
+  `docs/CLAIMS_LEDGER.md`. The primary table must be reproduced on the frozen test
+  split.
+- **Novelty re-check (I21).** Refresh the landscape scan and position explicitly vs
+  AdaEAGLE / Judge Decoding / WhiFlash (and anything newer) before freezing "C10
+  unoccupied".
+- **Claims-ledger + manuscript.** Move C10 to a supported claim; build the two
+  headline figures (I18) and the anonymous manuscript (I19); keep G2-gated language.
+- **Uncommitted work.** The capture-sampling fix, `pair`/`data_dir`/`c_reg`/
+  `domain_control` threading, length/Tier-2 + payoff, and this report are not yet
+  committed.
+
+### To do (next steps, highest leverage first)
+1. **G2 interventions (I15) on the first-token direction.** Derive the acceptance
+   direction; ablate / project-out / steer at selected layers × strengths vs
+   norm-matched + random controls; measure the acceptance change. Success upgrades
+   diagnostic → **causal / circuit** — the single biggest strengthening, and the
+   project's headline ambition.
+2. **Minimal cheap sufficient statistic.** Does a small low-dim subspace (a few dims
+   / one layer) recover most of `raw`'s first-token lift? Turns a predictive result
+   into a *deployable* one (today's cheap variants don't clear the bar).
+3. **Frozen test pass** — converts dev → confirmed (evidence gate).
+4. **Target-appropriate layer sweep.** Layers 6/12/18/24 were tuned for the 0.5B
+   *draft* (24 layers); sweep the 28/32-layer *targets* to find where the signal
+   peaks (supports G2 localization).
+5. **Manuscript + novelty freeze** — I18 / I19 / I21, claims-ledger audit,
+   test-split confirmation, then submit per the staged policy (D010).
+
+## 1b. Validated transfer — domain-controlled, replicated (supersedes §1a)
+
+The single-pair §1a numbers are superseded by a **domain-controlled** binary
+analysis on **domain-balanced** captures across three model/corpus settings.
+(Prerequisite fix: `cap_prompts` + sorted truncation had captured only ~2 domains
+per run — re-captured 2026-07-21 with domain-stratified sampling.) The baseline is
+now `preround_hardened + domain` (one-hot), so the test is *"beyond entropy AND
+domain."* All numbers `c_reg=0.1`, dev, prompt-grouped OOF + bootstrap CI.
+
+| pair | #dom | base | raw comb | raw Δ | p≤0 | align Δ | drift Δ |
+|---|---|---|---|---|---|---|---|
+| Qwen v1 | 4 | 0.670 | 0.742 | **+0.0722** | 0.000 | +0.0137 | −0.0126 |
+| Qwen v2 | 7 | 0.618 | 0.731 | **+0.1124** | 0.000 | +0.0226 | +0.0139 |
+| Llama v1 | 4 | 0.696 | 0.765 | **+0.0685** | 0.000 | +0.0237 | −0.0466 |
+
+(v2 raw Δ 95% CI [+0.095, +0.130]; all three are CI-clean, p(Δ≤0)=0.)
+
+**The core finding replicates cleanly and robustly.** `raw_frontier` beats
+entropy + domain by **+0.07–0.11 AUROC**, all CI-clean, domain-controlled, across
+two model families (Qwen v1 +0.072 ≈ Llama v1 +0.069) and two corpora (v1 +0.072,
+v2 +0.112). It is the sole *consistently* credible signal on all three. Because it
+survives proper domain coverage + domain control on the 7-domain v2, the pre-round
+signal is **not domain identification** — the earlier 2-domain worry was a
+capture-sampling artifact, now fixed.
+
+**Caveats (honest):**
+- The **cheap/weak feature families** (align, drift, norm, lowrank) show only small
+  (+0.01–0.02) lift and flicker in/out of the `credible` set across runs — so only
+  `raw` is robust, and the near-zero-cost deployable variant stays marginal.
+- **v2's baseline is genuinely weaker** (0.618: acceptance is harder to predict from
+  entropy+domain there), so v2's larger delta is partly a weaker base — though
+  `raw`'s absolute AUROC (0.73) is in the same band as v1/Llama.
+- Still dev-only; the domain-controlled **length/Tier-2**, the frozen **test** pass,
+  a **novelty re-check** (I21), and (optional) **G2 interventions** remain.
+
+**Verdict:** the replication gate is **met** — domain-controlled, cross-model AND
+cross-corpus. With near-zero deployed cost (§G3 microbench) and calibration, this is
+a defensible, original honest-diagnostic contribution: *the target's cached
+pre-round representation predicts speculative-decoding acceptance beyond entropy and
+domain (+0.07–0.11 AUROC), at near-zero deployed cost, replicated across two model
+families and two corpora.*
+
+## 1c. Length is first-token-only — replicated, domain-controlled
+
+Per-accepted-length survival probes P(A≥k), `raw_frontier`, domain-controlled,
+`c_reg=0.1`, n_boot=2000, all three settings (dev):
+
+| k | Qwen-v1 Δ | Qwen-v2 Δ | Llama Δ |
+|---|---|---|---|
+| **1 (first-token)** | **+0.073** [+0.059,+0.088] | **+0.103** [+0.085,+0.121] | **+0.065** [+0.046,+0.084] |
+| 2 | +0.008 (null) | +0.045 (clean) | −0.007 (null) |
+| 4 | −0.010 (null) | −0.004 (null) | −0.019 (worse) |
+| 6 | −0.002 (null) | −0.011 (null) | −0.032 (worse) |
+| 8 | +0.002 (null) | −0.018 (worse) | −0.021 (worse) |
+
+The signal is concentrated at **k=1 (first-token)** on all three; for run-length
+(k≥4) it is **null-to-significantly-harmful** — the representation adds nothing
+beyond entropy+domain for long runs (base AUROC climbs to ~0.78–0.81 there, since
+domain determines who gets long runs) and degrades it on v2/Llama. The **Tier-2
+length controller** consequently does not benefit — on v2 it mostly *increases*
+regret (CI-robust help only at one cost, 0.5). So the deployable systems use, if
+any, is a **first-token skip** decision, not length selection — cleanly
+differentiated from AdaEAGLE (which sets length from features, exactly where our
+signal fails).
 
 ## 1a. Firmed-up + length-aware update (c_reg=0.1, n_boot=2000)
 
