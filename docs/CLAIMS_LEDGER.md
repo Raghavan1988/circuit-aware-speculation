@@ -15,7 +15,7 @@ No claim may move to `SUPPORTED` without experiment identifiers, applicable sett
 | C07 | Any controller advantage persists against the best per-domain fixed policy. | UNTESTED | Per-domain held-out comparison | — | — |
 | C08 | The signal or controller transfers under domain and traffic shift without full retuning. | UNTESTED | Shift study with calibration drift and latency regret | — | — |
 | C09 | The principal finding replicates outside the primary Qwen pair. | UNTESTED | Compatible Llama pair or approved Qwen-ratio fallback | — | — |
-| C10 | Next-round acceptance is predictable from cached verified-context representations before any draft compute, at deployable marginal cost. | UNTESTED (dev-strong + causal 2026-07-22; frozen predictive test pending) | Prompt-grouped held-out comparison against post-draft signals (entropy, margin, learned head), with deployed-path overhead measured (I23) | — | **Narrowed 2026-07-11 (I21 R2):** AdaEAGLE (2412.18910; pre-draft length from target verified-context features, EAGLE, uncalibrated, no skip/baselines); Judge Decoding (2501.19309; target-embedding judge **during verify**, relaxes losslessness); WhiFlash (2606.07710; pre-draft drafter routing). Full C10 cell (lossless, calibrated, baseline-controlled, independent drafter, skip-capable) still unoccupied. Baselines must include free frontier entropy/margin at last verified position (cf. 2606.30265). SemanticSpec (2602.03708) does not scoop (mid-verify semantic-relaxed probes). See landscape.md + ledger notes |
+| C10 | Next-round acceptance is predictable from cached verified-context representations before any draft compute, at deployable marginal cost. | SUPPORTED (first-token scope; frozen test 3/3, 2026-07-22) | Prompt-grouped held-out comparison against post-draft signals (entropy, margin, learned head), with deployed-path overhead measured (I23) | I13/I23 frozen test pass: `autoresearch_test_domctl.json` on `sweep-2026-07-11T203836` (Δauroc +0.0755 [+0.0625,+0.0884]), `sweep-v2-f8-2026-07-13` (+0.0918 [+0.0727,+0.1108]), `sweep-llama-f8-2026-07-13` (+0.0542 [+0.0386,+0.0708]); all p(Δ≤0)=0, controls-clean, domain-controlled; causal I15 (2026-07-22 note) | **Narrowed 2026-07-11 (I21 R2):** AdaEAGLE (2412.18910; pre-draft length from target verified-context features, EAGLE, uncalibrated, no skip/baselines); Judge Decoding (2501.19309; target-embedding judge **during verify**, relaxes losslessness); WhiFlash (2606.07710; pre-draft drafter routing). Full C10 cell (lossless, calibrated, baseline-controlled, independent drafter, skip-capable) still unoccupied. Baselines must include free frontier entropy/margin at last verified position (cf. 2606.30265). SemanticSpec (2602.03708) does not scoop (mid-verify semantic-relaxed probes). See landscape.md + ledger notes |
 | C11 | The identified acceptance representation transfers beyond independent drafts to a modern speculator family. | UNTESTED | Cross-speculator evaluation; extension work, only after the core evidence gate (D009) | — | — |
 
 ## Landscape verification notes (I21)
@@ -664,4 +664,49 @@ number script-generated from immutable artifacts.
   NOT a draft–target "circuit"; the LANGUAGE upgrade is a human gate (D020).
 - **C10 status:** dev-strong + causally validated, but the frozen PREDICTIVE test
   pass is pending; C10 stays `UNTESTED` for the frozen table until then.
+- Logged by Claude, 2026-07-22.
+
+### 2026-07-22 — C10 frozen predictive TEST pass: 3/3 settings PASS (C10 → SUPPORTED, first-token scope)
+
+The deliberate one-shot frozen test pass for the pre-round first-token acceptance
+signal (I13/I23, D023/D025). Protocol pre-registered before unblinding: candidate
+= `raw_frontier` ONLY (the sole dev survivor; single-spec scoring avoids multiple
+comparisons on test), layers 6/12/18/24, `c_reg=0.1`, `domain_control=True`
+(baseline = `preround_hardened + domain`), seed 0, prompt-grouped OOF +
+equal-capacity norm-matched/random controls + prompt-grouped bootstrap CI —
+machinery identical to dev (cas.autoresearch.eval, unchanged). Pass criterion per
+setting: Δauroc > 0, CI-clean (p(Δ≤0)<0.05), beats controls; replication = all
+three settings. Artifacts: `analysis/<run>/autoresearch_test_domctl.json`.
+
+| setting | n test rows | base | combined | Δauroc | 95% CI | p(Δ≤0) | ctrl AUROC |
+|---|---|---|---|---|---|---|---|
+| Qwen-v1 (4 dom) | 11,982 | 0.6593 | 0.7348 | **+0.0755** | [+0.0625, +0.0884] | 0.000 | 0.550 |
+| Qwen-v2 (7 dom) | 7,191 | 0.6246 | 0.7165 | **+0.0918** | [+0.0727, +0.1108] | 0.000 | 0.534 |
+| Llama (4 dom) | 9,610 | 0.7126 | 0.7669 | **+0.0542** | [+0.0386, +0.0708] | 0.000 | 0.559 |
+
+- **PASS 3/3.** The held-out test lifts match dev closely (dev +0.072/+0.112/+0.069)
+  — no dev-overfitting signature. Equal-capacity random/norm controls sit at
+  ~0.53–0.56 (below base): the lift is signal, not capacity. Platt-calibrated ECE
+  stays at baseline level (comb 0.016–0.018) — the ranking lift is decision-usable,
+  not a calibration artifact. `credible_systems` (AUROC-CI-clean + CI-robust
+  regret reduction over ≥2 costs) fires on all three (CI-robust at cost_draft
+  1.0–9.0 on both Qwen settings, 2.0–4.0 on Llama; still no help in the cheap-draft
+  regime ≤0.2 — unchanged boundary).
+- **Integrity disclosure:** a pre-existing `autoresearch_test_domctl.json` for
+  Qwen-v2 (full 5-spec library) was found on the volume before this pass — the v2
+  test split had been evaluated at least once earlier without a repo record
+  (likely a stray `--eval-split test` during the autoresearch loop). Its
+  `raw_frontier` numbers (+0.0906 [+0.0709,+0.1110]) agree with the pre-registered
+  re-run (+0.0918) to ~0.001 (earlier code state); conclusion unchanged.
+  Candidate/hyperparameter selection was documented as dev-only (D025,
+  autoresearch_outcomes.md) before this pass, so selection is untainted; the v1
+  and Llama test files did not exist before today.
+- **C10 → SUPPORTED, scope-limited:** (a) FIRST-TOKEN acceptance only — per-length
+  survival is null-to-harmful at k≥4 (dev, 3/3; ledger note above), so no
+  run-length or length-selection claim; (b) only the FULL frontier representation
+  clears the bar (cheap variants marginal — deployable-cheap variant open);
+  (c) marginal cost from the G3 microbench (~16 µs probe, 0.015% of a round,
+  dev-measured) — a full serving-path wall-clock claim stays G3-gated;
+  (d) counterexamples/limits vs AdaEAGLE / Judge Decoding / WhiFlash unchanged
+  (see C10 row); novelty re-check (I21) still due before manuscript freeze.
 - Logged by Claude, 2026-07-22.

@@ -28,7 +28,7 @@ Statuses are `OPEN`, `IN_PROGRESS`, `BLOCKED`, and `DONE`. Before starting, add 
 | I20 | OPEN | — | Run clean reproduction and evidence audit | I19 | — | GPU/CPU |
 | I21 | DONE | Grok | Verify landscape additions; maintain living comparison table | — | I01,I05 | CPU |
 | I22 | OPEN | — | Reproduce SpecDec++-style learned acceptance-head baseline | I03,I06,I10 | I08,I09 | GPU |
-| I23 | IN_PROGRESS | Claude | Pre-round acceptance prediction from cached representations | I10,I12 | I13,I14 | GPU |
+| I23 | DONE | Claude | Pre-round acceptance prediction from cached representations | I10,I12 | I13,I14 | GPU |
 | I24 | OPEN | — | Staged release package (benchmark, recipes, integration adapter) | I18,I20 | — | GPU/CPU |
 
 ## Build status (2026-07-10, Claude)
@@ -145,6 +145,13 @@ D025; `docs/autoresearch_outcomes.md`, `docs/causal_intervention_report.md`).
   `src/cas/autoresearch/interventions.py`; runner `modal_app.py::intervene`.
 - Capture-sampling bug (2-domain undersampling) found + fixed (stratified, D025);
   re-captured 4/7/4 domains; finding survived domain control (not domain identity).
+- **Frozen test pass DONE (later 2026-07-22): 3/3 PASS.** Single-spec
+  `raw_frontier`, domain-controlled, untouched test split: Δauroc +0.0755
+  (Qwen-v1) / +0.0918 (Qwen-v2) / +0.0542 (Llama), all p(Δ≤0)=0, controls-clean.
+  **C10 → `SUPPORTED` (first-token scope)**; I23 → DONE. Integrity note: a
+  pre-existing v2 test artifact (earlier unrecorded unblinding) is disclosed in
+  the ledger; conclusion unchanged. I13 stays IN_PROGRESS (calibration reporting
+  + manuscript-facing figures remain).
 
 ## Acceptance criteria and artifacts
 

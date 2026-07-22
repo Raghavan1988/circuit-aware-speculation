@@ -1,9 +1,10 @@
 # Autoresearch Outcomes — Pre-round Acceptance Signal (I13 / I23 / C10)
 
 Outcomes of the generator–critic autoresearch loop (`docs/generator_critic.md`,
-D023) run against the sealed Qwen-v1 fixed-8 traces. This is a **development-set,
-tentative** report. No claim here is frozen; **C10 remains `UNTESTED`** in
-`docs/CLAIMS_LEDGER.md`. Per D020, a predictive survivor is a **diagnostic
+D023) run against the sealed Qwen-v1 fixed-8 traces. The development-set findings
+below were confirmed by the **frozen test pass on 2026-07-22 (3/3 settings PASS;
+Δauroc +0.075/+0.092/+0.054, all CI-clean)** — see the dated claims-ledger note;
+**C10 is now `SUPPORTED` (first-token scope)** in `docs/CLAIMS_LEDGER.md`. Per D020, a predictive survivor is a **diagnostic
 signal / representation**, never a "circuit" or "mechanism", until interventions
 (I15/G2) pass — that language is used throughout.
 
@@ -54,9 +55,10 @@ signal / representation**, never a "circuit" or "mechanism", until interventions
   `docs/causal_intervention_report.md`.
 
 ### Blocking (before submission)
-- **Frozen test pass.** Everything is dev-only; **C10 is `UNTESTED`** in
-  `docs/CLAIMS_LEDGER.md`. The primary table must be reproduced on the frozen test
-  split.
+- **Frozen test pass — DONE 2026-07-22 (3/3 PASS).** Single-spec `raw_frontier`,
+  domain-controlled, on the untouched test split of all three settings: Δauroc
+  +0.0755 (Qwen-v1) / +0.0918 (Qwen-v2) / +0.0542 (Llama), all p(Δ≤0)=0,
+  controls-clean. C10 → `SUPPORTED` (first-token scope). See the claims ledger.
 - **Novelty re-check (I21).** Refresh the landscape scan and position explicitly vs
   AdaEAGLE / Judge Decoding / WhiFlash (and anything newer) before freezing "C10
   unoccupied".
