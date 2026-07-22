@@ -1417,19 +1417,24 @@ def capture_frontier_activations(run_id: str = "sweep-2026-07-11T203836",
 
 @app.local_entrypoint()
 def capture_frontier(run_id: str = "sweep-2026-07-11T203836",
-                     cap_prompts: int = 120, split: str = "dev"):
+                     cap_prompts: int = 120, split: str = "dev",
+                     cas_pair: str = "qwen", data_dir: str = "data"):
     """Capture the target-frontier representation for a sealed run (D023).
 
     --split: 'dev' (default), 'test', or 'all' (dev+test in one artifact,
              cap_prompts applied per split). Capturing 'all' once avoids the
              re-capture-overwrites-dev footgun before the eventual test pass.
+    --cas-pair / --data-dir: transfer pairs. v2 = `--cas-pair qwen --data-dir
+             data_v2`; Llama = `--cas-pair llama --data-dir data` (v1 corpus; gated
+             weights need a valid HF token).
 
     LAPTOP-SAFE: launch with `modal run --detach` so the job keeps running on
     Modal's infrastructure after you close the laptop / terminal --
         modal run --detach modal_app.py::capture_frontier --split all
     then watch it later with `modal app list` and `modal app logs <app-id>`.
     """
-    capture_frontier_activations.remote(run_id, cap_prompts=cap_prompts, split=split)
+    capture_frontier_activations.remote(run_id, cap_prompts=cap_prompts, split=split,
+                                        cas_pair=cas_pair, data_dir=data_dir)
 
 
 @app.function(image=image, volumes=VOLUMES, timeout=2 * 3600)  # CPU-only
