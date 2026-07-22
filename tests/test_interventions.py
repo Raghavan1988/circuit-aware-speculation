@@ -72,16 +72,25 @@ def test_entropy_mediation_direct_effect_is_beyond():
     assert m["beyond_entropy"] is True and m["c_total"] > 0 and m["c_direct"] > 0
 
 
-def test_g2_verdict_requires_all_conditions():
-    alphas = np.array([-2.0, 0.0, 2.0])
-    real = dose_response(alphas, np.array([0.3, 0.5, 0.7]))     # monotone, effect 0.4
-    ctrls = [dose_response(alphas, np.array([0.5, 0.5, 0.5]))]  # flat controls
-    good_med = {"beyond_entropy": True}
-    bad_med = {"beyond_entropy": False}
-    assert g2_verdict(real, ctrls, good_med)["causal_beyond_entropy"] is True
-    assert g2_verdict(real, ctrls, bad_med)["causal_beyond_entropy"] is False   # entropy-mediated
-    # verdict never emits mechanistic language
-    assert "diagnostic signal" in g2_verdict(real, ctrls, good_med)["language"]
+def test_disruption_detects_peak_at_zero():
+    from cas.autoresearch.interventions import disruption
+    alphas = np.array([-2.0, -1.0, 0.0, 1.0, 2.0])
+    real = disruption(alphas, np.array([0.22, 0.66, 0.82, 0.71, 0.47]))  # actual pilot L12
+    assert real["peak_at_zero"] and real["abs_monotone"] and real["disruption"] > 0.2
+    ctrl = disruption(alphas, np.array([0.70, 0.79, 0.82, 0.75, 0.68]))  # flat control
+    assert ctrl["disruption"] < real["disruption"]
+
+
+def test_g2_verdict_disruption_based():
+    from cas.autoresearch.interventions import disruption
+    alphas = np.array([-2.0, -1.0, 0.0, 1.0, 2.0])
+    real = disruption(alphas, np.array([0.22, 0.66, 0.82, 0.71, 0.47]))
+    ctrls = [disruption(alphas, np.array([0.70, 0.79, 0.82, 0.75, 0.68])),   # random
+             disruption(alphas, np.array([0.59, 0.76, 0.82, 0.81, 0.65]))]   # shuffled
+    # real disrupts more than controls + beyond entropy -> causal; else not
+    assert g2_verdict(real, ctrls, {"beyond_entropy": True})["causal_beyond_entropy"] is True
+    assert g2_verdict(real, ctrls, {"beyond_entropy": False})["causal_beyond_entropy"] is False
+    assert "diagnostic signal" in g2_verdict(real, ctrls, {"beyond_entropy": True})["language"]
 
 
 if __name__ == "__main__":
