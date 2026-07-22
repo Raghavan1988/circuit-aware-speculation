@@ -1281,7 +1281,8 @@ def capture(run_id: str = "sweep-2026-07-11T203836", cap_prompts: int = 120):
 
 @app.function(image=image, gpu=GPU, volumes=VOLUMES, timeout=6 * 3600)
 def capture_frontier_activations(run_id: str = "sweep-2026-07-11T203836",
-                                 cap_prompts: int = 120, split: str = "dev") -> dict:
+                                 cap_prompts: int = 120, split: str = "dev",
+                                 cas_pair: str = "qwen", data_dir: str = "data") -> dict:
     """I23/C10 (D023): teacher-forced TARGET residual-stream capture at the
     verified-context FRONTIER (last-committed) position that exists BEFORE each
     decode round drafts, labelled by that round's OWN realized acceptance. A probe
@@ -1304,6 +1305,7 @@ def capture_frontier_activations(run_id: str = "sweep-2026-07-11T203836",
     import pyarrow.parquet as pq
     import torch
 
+    os.environ["CAS_PAIR"] = cas_pair       # select the pair BEFORE cas.config imports
     from cas.annotate.phases import annotate_phase
     from cas.autoresearch.types import (
         FRONTIER_META_COLS, FRONTIER_SUBDIR, frontier_acts_filename)
@@ -1319,12 +1321,12 @@ def capture_frontier_activations(run_id: str = "sweep-2026-07-11T203836",
     base = f"/artifacts/traces/{run_id}"
     rounds = pq.read_table(f"{base}/fixed_8/rounds.parquet").to_pylist()
     summ = pq.read_table(f"{base}/fixed_8/request_summaries.parquet").to_pylist()
-    with open("/artifacts/data/split_manifest.json") as f:
+    with open(f"/artifacts/{data_dir}/split_manifest.json") as f:
         assignment = json.load(f)["assignment"]          # prompt_hash -> split
     split_of = {s["request_id"]: assignment.get(s["prompt_hash"], "unknown")
                 for s in summ}
     domain_of = {s["request_id"]: s["domain"] for s in summ}
-    with open("/artifacts/data/prompts.jsonl") as f:
+    with open(f"/artifacts/{data_dir}/prompts.jsonl") as f:
         prompt_text = {json.loads(l)["prompt_id"]: json.loads(l)["prompt_text"]
                        for l in (ln for ln in f)}
 
