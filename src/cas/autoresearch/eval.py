@@ -216,6 +216,36 @@ def _fit_oof(X, y, groups, seed=0, n_splits=5, c_reg=1.0, max_iter=5000) -> np.n
     return oof
 
 
+def _fit_platt(scores, y, seed=0):
+    """Fit the 2-parameter global Platt map on the LOG-ODDS of ``scores``.
+
+    Returns the fitted ``LogisticRegression`` (apply with ``_apply_platt``), or
+    ``None`` when ``y`` is single-class — callers fall back to the constant
+    train-prior probability. Split out of ``_calibrate_oof`` so the frozen
+    dev->test pass can fit the calibrator on DEV scores and apply it, frozen, to
+    TEST scores (``frozen_transfer_lift``)."""
+    from sklearn.linear_model import LogisticRegression
+
+    y = np.asarray(y)
+    if len(np.unique(y)) < 2:
+        return None
+    s = np.clip(np.asarray(scores, dtype=float), 1e-6, 1.0 - 1e-6)
+    logit = np.log(s / (1.0 - s)).reshape(-1, 1)
+    lr = LogisticRegression(max_iter=1000, random_state=seed)
+    lr.fit(logit, y)
+    return lr
+
+
+def _apply_platt(cal, scores, prior=0.5) -> np.ndarray:
+    """Apply a ``_fit_platt`` map to ``scores`` (same clip -> log-odds frame);
+    constant ``prior`` when ``cal`` is None (single-class fit)."""
+    s = np.clip(np.asarray(scores, dtype=float), 1e-6, 1.0 - 1e-6)
+    if cal is None:
+        return np.full(len(s), float(prior))
+    logit = np.log(s / (1.0 - s)).reshape(-1, 1)
+    return cal.predict_proba(logit)[:, 1]
+
+
 def _calibrate_oof(oof, y, seed=0) -> np.ndarray:
     """Global Platt recalibration of out-of-fold acceptance probabilities.
 
@@ -231,16 +261,11 @@ def _calibrate_oof(oof, y, seed=0) -> np.ndarray:
     combined, so it cancels in the (combined - base) decision-metric delta we
     compare. Single-class y -> constant prior.
     """
-    from sklearn.linear_model import LogisticRegression
-
     y = np.asarray(y)
-    s = np.clip(np.asarray(oof, dtype=float), 1e-6, 1.0 - 1e-6)
-    logit = np.log(s / (1.0 - s)).reshape(-1, 1)
-    if len(np.unique(y)) < 2:
+    cal = _fit_platt(oof, y, seed=seed)
+    if cal is None:
         return np.full(len(y), float(np.mean(y)) if len(y) else 0.5)
-    lr = LogisticRegression(max_iter=1000, random_state=seed)
-    lr.fit(logit, y)
-    return lr.predict_proba(logit)[:, 1]
+    return _apply_platt(cal, oof)
 
 
 def _metrics(y, oof) -> dict:
@@ -438,6 +463,173 @@ def incremental_lift(X_base, X_cand, y, groups, seed=0, n_splits=5,
         "pos_rate": float(np.mean(y)),
         "n_features_base": int(n_feat_base),
         "n_features_cand": int(n_feat_cand),
+    })
+    return out
+
+
+def _fit_frozen_scores(X_dev, y_dev, X_test, seed=0, c_reg=1.0,
+                       max_iter=5000) -> np.ndarray:
+    """Dev-frozen probe scores for test rows.
+
+    ``StandardScaler`` + ``LogisticRegression(C=c_reg)`` fit on ALL dev rows,
+    applied exactly once to the test rows. Single-class dev falls back to the
+    constant train-prior probability (mirrors ``_fit_oof``'s degenerate-fold
+    fallback)."""
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.preprocessing import StandardScaler
+
+    y_dev = np.asarray(y_dev)
+    if len(np.unique(y_dev)) < 2:
+        prior = float(np.mean(y_dev)) if len(y_dev) else 0.0
+        return np.full(X_test.shape[0], prior)
+    sc = StandardScaler().fit(X_dev)
+    clf = LogisticRegression(max_iter=max_iter, C=c_reg, random_state=seed)
+    clf.fit(sc.transform(X_dev), y_dev)
+    return clf.predict_proba(sc.transform(X_test))[:, 1]
+
+
+def frozen_transfer_lift(X_base_dev, X_cand_dev, y_dev, groups_dev,
+                         X_base_test, X_cand_test, y_test, groups_test,
+                         seed=0, n_splits=5, n_boot=1000, c_reg=1.0) -> dict:
+    """Strict dev->test transfer scorer: every fitted object is frozen on DEV.
+
+    The one-shot frozen-test companion to ``incremental_lift``. Where
+    ``incremental_lift`` on ``eval_split='test'`` runs GroupKFold OOF *within*
+    the test rows (nothing is ever selected on test, but each fold model is
+    still FIT on test rows), this scorer never fits anything on test:
+
+      * ``StandardScaler`` + ``LogisticRegression(C=c_reg)`` are fit on ALL dev
+        rows per design (base / combined / control_random / control_norm); the
+        test rows are scored exactly once with the frozen model.
+      * The equal-capacity controls are i.i.d. N(0,1) columns drawn
+        deterministically from ``seed`` for dev and test rows; the norm-matched
+        variant is rescaled to the CANDIDATE'S DEV per-column std (dev-frozen
+        scale — no test statistic enters the pipeline).
+      * The Platt calibrator is fit on DEV prompt-grouped OOF scores (via
+        ``_fit_oof``, so its input distribution is never in-sample-optimistic)
+        and applied frozen to the test scores. Caveat: the frozen full-dev model
+        is trained on ~n_splits/(n_splits-1) more rows than each OOF fold model,
+        so its score distribution is slightly sharper than the calibrator's
+        input — AUROC/AUPRC are unaffected (monotone map); calibrated ECE /
+        regret carry this honest, deployment-faithful transfer mismatch.
+      * The AUROC-delta CI and the regret-sweep CI bootstrap TEST prompts
+        (grouped, never rows), exactly as in ``incremental_lift``.
+
+    Returns the ``incremental_lift`` result shape plus
+    ``protocol='frozen_dev_to_test'``, ``n_dev``, ``pos_rate_dev``, and
+    ``dev_reference`` (dev OOF base/combined AUROC for context)."""
+    X_base_dev = np.asarray(X_base_dev, dtype=float)
+    X_cand_dev = np.asarray(X_cand_dev, dtype=float)
+    X_base_test = np.asarray(X_base_test, dtype=float)
+    X_cand_test = np.asarray(X_cand_test, dtype=float)
+    y_dev = np.asarray(y_dev)
+    y_test = np.asarray(y_test)
+    groups_dev = np.asarray(groups_dev)
+    groups_test = np.asarray(groups_test)
+    if X_base_dev.ndim == 1:
+        X_base_dev = X_base_dev.reshape(-1, 1)
+    if X_cand_dev.ndim == 1:
+        X_cand_dev = X_cand_dev.reshape(-1, 1)
+    if X_base_test.ndim == 1:
+        X_base_test = X_base_test.reshape(-1, 1)
+    if X_cand_test.ndim == 1:
+        X_cand_test = X_cand_test.reshape(-1, 1)
+
+    # Equal-capacity controls: dev drawn first, then test, from one seeded
+    # stream — deterministic given shapes. Norm-match scale is DEV-frozen.
+    rng = np.random.default_rng(seed)
+    R_dev = rng.standard_normal(size=X_cand_dev.shape)
+    R_test = rng.standard_normal(size=X_cand_test.shape)
+    cand_std = X_cand_dev.std(axis=0)
+
+    def _norm_match(R):
+        r_std = R.std(axis=0)
+        r_std_safe = np.where(r_std == 0.0, 1.0, r_std)
+        return R / r_std_safe * cand_std
+
+    designs = {
+        "base": (X_base_dev, X_base_test),
+        "combined": (np.hstack([X_base_dev, X_cand_dev]),
+                     np.hstack([X_base_test, X_cand_test])),
+        "control_random": (np.hstack([X_base_dev, R_dev]),
+                           np.hstack([X_base_test, R_test])),
+        "control_norm": (np.hstack([X_base_dev, _norm_match(R_dev)]),
+                         np.hstack([X_base_test, _norm_match(R_test)])),
+    }
+    scores = {k: _fit_frozen_scores(dv, y_dev, tv, seed=seed, c_reg=c_reg)
+              for k, (dv, tv) in designs.items()}
+    models = {k: _metrics(y_test, v) for k, v in scores.items()}
+
+    # Dev OOF: context numbers + the (frozen) calibrator's training input.
+    oof_dev = {k: _fit_oof(designs[k][0], y_dev, groups_dev, seed=seed,
+                           n_splits=n_splits, c_reg=c_reg)
+               for k in ("base", "combined")}
+    dev_ref = {k: _metrics(y_dev, v) for k, v in oof_dev.items()}
+
+    prior = float(np.mean(y_dev)) if len(y_dev) else 0.5
+    cal = {k: _apply_platt(_fit_platt(oof_dev[k], y_dev, seed=seed),
+                           scores[k], prior=prior)
+           for k in ("base", "combined")}
+    cal_models = {k: _metrics(y_test, v) for k, v in cal.items()}
+    reg_sweep = regret_cost_sweep(y_test, cal["base"], cal["combined"])
+    reg_ci = _regret_sweep_ci(y_test, cal["base"], cal["combined"], groups_test,
+                              seed=seed, n_boot=n_boot)
+    for s, ci in zip(reg_sweep, reg_ci):
+        s.update({"delta_ci_lo": ci["delta_ci_lo"], "delta_ci_hi": ci["delta_ci_hi"],
+                  "p_delta_ge_0": ci["p_delta_ge_0"], "helps_ci": ci["helps_ci"]})
+
+    def _cdelta(metric):
+        a, b = cal_models["combined"][metric], cal_models["base"][metric]
+        return None if (a is None or b is None) else float(a - b)
+
+    def _delta(metric):
+        a, b = models["combined"][metric], models["base"][metric]
+        return None if (a is None or b is None) else float(a - b)
+
+    a_comb = models["combined"]["auroc"]
+    a_base = models["base"]["auroc"]
+    a_ctrl = [models["control_random"]["auroc"], models["control_norm"]["auroc"]]
+    beats_baseline = (a_comb is not None and a_base is not None
+                      and a_comb > a_base + 1e-4)
+    ctrl_defined = [a for a in a_ctrl if a is not None]
+    beats_controls = (a_comb is not None and len(ctrl_defined) > 0
+                      and a_comb > max(ctrl_defined) + 1e-4)
+
+    auroc_ci = _group_bootstrap_delta(y_test, scores["base"], scores["combined"],
+                                      groups_test, seed=seed, n_boot=n_boot)
+    n_ci_robust = int(sum(1 for s in reg_sweep if s["helps_ci"]))
+    auroc_ci_clean = bool(auroc_ci.get("p_delta_le_0") is not None
+                          and auroc_ci["p_delta_le_0"] < 0.05)
+    credible_systems = bool(auroc_ci_clean and n_ci_robust >= 2)
+
+    out = dict(models)
+    out.update({
+        "deltas": {"auroc": _delta("auroc"), "auprc": _delta("auprc"),
+                   "brier": _delta("brier")},
+        "beats_baseline": bool(beats_baseline),
+        "beats_controls": bool(beats_controls),
+        "delta_auroc_ci": auroc_ci,
+        "base_calibrated": cal_models["base"],
+        "combined_calibrated": cal_models["combined"],
+        "deltas_calibrated": {"brier": _cdelta("brier"), "ece": _cdelta("ece"),
+                              "regret": _cdelta("regret")},
+        "helps_decision_calibrated": bool(
+            cal_models["combined"]["regret"] < cal_models["base"]["regret"] - 1e-6),
+        "regret_cost_sweep": reg_sweep,
+        "helps_at_any_cost": bool(any(s["helps"] for s in reg_sweep)),
+        "helps_at_any_cost_ci": bool(any(s["helps_ci"] for s in reg_sweep)),
+        "auroc_ci_clean": auroc_ci_clean,
+        "n_ci_robust_costs": n_ci_robust,
+        "credible_systems": credible_systems,
+        "protocol": "frozen_dev_to_test",
+        "n": int(len(y_test)),
+        "pos_rate": float(np.mean(y_test)),
+        "n_dev": int(len(y_dev)),
+        "pos_rate_dev": float(np.mean(y_dev)),
+        "dev_reference": {"base_auroc_oof": dev_ref["base"]["auroc"],
+                          "combined_auroc_oof": dev_ref["combined"]["auroc"]},
+        "n_features_base": int(X_base_dev.shape[1]),
+        "n_features_cand": int(X_cand_dev.shape[1]),
     })
     return out
 
