@@ -6,8 +6,11 @@ the derived direction is fit on dev and evaluated on held-out test rounds.** Per
 D020, results are stated as a **diagnostic signal / representation-level causal**
 claim, never "circuit"/"mechanism", until a human trips G2 after replication.
 
-**Status:** Qwen-v1 complete (below); **Llama replication in progress** — the
-second G2 requirement. This report is updated when it lands.
+**Status:** Qwen-v1 and Llama both complete — the causal effect **replicates across
+both model families** (§3). The two empirical G2 criteria (survives controls +
+dose-responsive + beyond entropy, AND replicated) are **met**; tripping G2 (the
+move to causal/representation-level language in frozen claims) is a human decision
+(D020).
 
 ## 1. Why (motivation)
 
@@ -112,8 +115,22 @@ target's computation, not merely correlated with acceptance. The effect is
 stream, most active late (consistent with next-token resolution happening late),
 rather than a single-layer circuit.
 
-**Llama replication:** *in progress* — pending; will complete the second G2
-requirement (updated here on landing).
+**Llama, 4 layers, 200 test rounds, `sealed_fidelity = 1.00`:**
+
+| layer | baseline accept | real disruption | control disruption (rand / shuf) | beats ctrl | beyond H | **causal** |
+|---|---|---|---|---|---|---|
+| 6  | 0.82 | **+0.318** | −0.015 / −0.014 | ✓ | ✓ | **True** |
+| 12 | 0.82 | **+0.398** | 0.027 / 0.009 | ✓ | ✓ | **True** |
+| 18 | 0.82 | **+0.396** | 0.070 / 0.065 | ✓ | ✓ | **True** |
+| 24 | 0.82 | **+0.368** | 0.074 / 0.066 | ✓ | ✓ | **True** |
+
+**Replicated.** Llama shows the **same pattern** as v1 — all four layers causal,
+real disruption ~0.32–0.40 vs **near-zero** control disruption — and is **cleaner**:
+`sealed_fidelity = 1.00` (perfect re-forward fidelity, confirming v1's 0.95 was
+bf16 numerical noise, not a bug) and controls ≈ 0 (even slightly negative at L6).
+So the causal effect **replicates across two model families**: perturbing the
+acceptance direction specifically disrupts first-token acceptance, dose-dependently,
+beyond entropy, on **both Qwen and Llama**.
 
 ## 4. Caveats / threats to validity
 
@@ -133,10 +150,13 @@ requirement (updated here on landing).
 
 ## 5. Verdict + next steps
 
-**Qwen-v1 is a clean preliminary causal pass** — control-surviving, dose-responsive,
-beyond-entropy, at all four layers. On **Llama replication**, both G2 halves are
-met, and the finding can honestly move from "diagnostic signal" toward a
-**replicated, representation-level causal** claim (human G2 gate, D020).
+**Both Qwen-v1 and Llama pass** — control-surviving, dose-responsive, beyond-entropy,
+at all four layers, on **both model families**. The two empirical G2 criteria (D020)
+are **met**. Tripping G2 — moving to causal / representation-level language in frozen
+claims — is now a human decision. The honest claim available: *"the pre-round
+acceptance direction causally controls the target's next-token agreement-ability,
+beyond entropy, replicated across two model families"* — representation-level, not a
+draft–target "circuit".
 
 Then, to firm up for a claim: a **finer layer sweep** to characterize where the
 effect peaks; larger `cap_test` for tighter estimates; a projection-removal
