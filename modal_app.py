@@ -1279,7 +1279,8 @@ def capture(run_id: str = "sweep-2026-07-11T203836", cap_prompts: int = 120):
     capture_activations.remote(run_id, cap_prompts=cap_prompts)
 
 
-@app.function(image=image, gpu=GPU, volumes=VOLUMES, timeout=6 * 3600)
+@app.function(image=image, gpu=GPU, volumes=VOLUMES, timeout=6 * 3600,
+              secrets=[hf_secret])
 def capture_frontier_activations(run_id: str = "sweep-2026-07-11T203836",
                                  cap_prompts: int = 120, split: str = "dev",
                                  cas_pair: str = "qwen", data_dir: str = "data") -> dict:
@@ -1342,9 +1343,22 @@ def capture_frontier_activations(run_id: str = "sweep-2026-07-11T203836",
     target_splits = ("dev", "test") if split == "all" else (split,)
     reqs = []
     for sp in target_splits:
-        sp_reqs = sorted(rid for rid in by_req
-                         if split_of.get(rid) == sp and rid in prompt_text)
-        reqs += sp_reqs[:cap_prompts]
+        # Domain-STRATIFIED round-robin: plain sorted truncation clusters into ~1-2
+        # domains (prompt ids sort by dataset), which undersamples the corpus and
+        # confounds domain-control (fixed 2026-07-21). Round-robin across domains so
+        # cap_prompts (the per-split total) spans EVERY domain evenly.
+        by_dom: dict = {}
+        for rid in sorted(rid for rid in by_req
+                          if split_of.get(rid) == sp and rid in prompt_text):
+            by_dom.setdefault(domain_of.get(rid, "unknown"), []).append(rid)
+        doms = sorted(by_dom)
+        picked, i = [], 0
+        while len(picked) < cap_prompts and any(by_dom[d] for d in doms):
+            bucket = by_dom[doms[i % len(doms)]]
+            if bucket:
+                picked.append(bucket.pop(0))
+            i += 1
+        reqs += picked
 
     acts = {L: [] for L in DEFAULT_LAYERS}
     meta = []
@@ -1437,6 +1451,162 @@ def capture_frontier(run_id: str = "sweep-2026-07-11T203836",
                                         cas_pair=cas_pair, data_dir=data_dir)
 
 
+@app.function(image=image, gpu=GPU, volumes=VOLUMES, timeout=6 * 3600,
+              secrets=[hf_secret])
+def intervene(run_id: str = "sweep-2026-07-11T203836", cap_test: int = 100,
+              layers: str = "12,18", alphas: str = "-2,-1,0,1,2",
+              cas_pair: str = "qwen", data_dir: str = "data", seed: int = 0) -> dict:
+    """I15 (G2 causal test) -- PILOT SCAFFOLD. Forward-hook steering of the
+    first-token acceptance direction. Derive d̂ per layer on DEV frontier states;
+    on TEST rounds, add α·σ·d̂ to the target residual stream at the frontier
+    position, re-read the target argmax + entropy, and measure first-token
+    acceptance (draft proposal == intervened target argmax) vs random + shuffled
+    controls, across doses. Reports dose-response, beats-controls, and the
+    entropy-stratified 'beyond entropy' verdict (cas.autoresearch.interventions).
+
+    VALIDATE before trusting: the `alpha0_sanity` field must be ~1.0 (a no-op hook
+    must reproduce the sealed target argmax) -- it checks the hook site and the
+    layer↔hidden_states[L] index (hook layers[L-1]). Nothing here trips G2; a human
+    confirms layer-specificity + replication (D020). D015 prefers nnsight; this uses
+    transparent forward hooks (no image change) and nnsight may be swapped in."""
+    import json
+    import os
+
+    import numpy as np
+    import pyarrow.parquet as pq
+    import torch
+
+    os.environ["CAS_PAIR"] = cas_pair
+    from cas.autoresearch.interventions import (acceptance_direction,
+                                                dose_response,
+                                                entropy_stratified_effect,
+                                                g2_verdict, random_control,
+                                                shuffled_control)
+    from cas.autoresearch.types import FRONTIER_SUBDIR, frontier_acts_filename
+    from cas.capture import frontier_position
+    from cas.config import EngineConfig
+    from cas.models import load_pair
+
+    torch.set_grad_enabled(False)
+    mp = load_pair(EngineConfig())
+    target, tok, dev = mp.target, mp.tokenizer, mp.device
+    dtype = next(target.parameters()).dtype
+    Ls = [int(x) for x in layers.split(",")]
+    al = [float(x) for x in alphas.split(",")]
+
+    # DEV frontier states + labels -> acceptance direction d̂ and dose scale σ per L
+    fdir = f"/artifacts/probes/{run_id}/{FRONTIER_SUBDIR}"
+    meta = pq.read_table(f"{fdir}/frontier_metadata.parquet").to_pylist()
+    dev_idx = [i for i, m in enumerate(meta) if m["split"] == "dev"]
+    acc = np.array([meta[i]["accept"] for i in dev_idx])
+    dirs, sigma = {}, {}
+    for L in Ls:
+        A = np.load(f"{fdir}/{frontier_acts_filename(L)}")[dev_idx].astype("float32")
+        real = acceptance_direction(A, acc)
+        dirs[L] = {"real": real, "random": random_control(real, seed=seed),
+                   "shuffled": shuffled_control(real, seed=seed)}
+        sigma[L] = float(np.linalg.norm(A, axis=1).mean())      # ~mean state norm
+
+    # Reconstruct TEST prefixes (mirrors capture_frontier_activations)
+    base = f"/artifacts/traces/{run_id}"
+    rounds = pq.read_table(f"{base}/fixed_8/rounds.parquet").to_pylist()
+    summ = pq.read_table(f"{base}/fixed_8/request_summaries.parquet").to_pylist()
+    with open(f"/artifacts/{data_dir}/split_manifest.json") as f:
+        assign = json.load(f)["assignment"]
+    split_of = {s["request_id"]: assign.get(s["prompt_hash"], "unknown") for s in summ}
+    with open(f"/artifacts/{data_dir}/prompts.jsonl") as f:
+        ptext = {json.loads(l)["prompt_id"]: json.loads(l)["prompt_text"] for l in f}
+    by_req = {}
+    for r in rounds:
+        by_req.setdefault(r["request_id"], []).append(r)
+
+    samples = []                          # (prefix, frontier_pos, draft_first, target_first)
+    for rid in sorted(r for r in by_req if split_of.get(r) == "test" and r in ptext):
+        pids = tok(ptext[rid])["input_ids"]
+        first = int(mp.target(input_ids=torch.tensor([pids], device=dev),
+                              use_cache=False).logits[0, -1].argmax())
+        prefix = list(pids) + [first]
+        for r in sorted(by_req[rid], key=lambda x: x["round_id"]):
+            prop = list(r["proposed_token_ids"] or [])
+            targ = list(r["target_argmax_ids"] or [])
+            if prop:
+                samples.append((list(prefix), frontier_position(len(prefix)),
+                                int(prop[0]), int(targ[0]) if targ else -1))
+            prefix += list(r["emitted_token_ids"] or [])
+            if len(samples) >= cap_test:
+                break
+        if len(samples) >= cap_test:
+            break
+
+    def steered(prefix, pos, L, delta):
+        """Forward the target with an additive hook at layers[L-1] output, pos.
+        Returns (argmax_token, entropy) at the frontier position."""
+        def hook(_m, _i, out):
+            o = out[0] if isinstance(out, tuple) else out
+            if delta is not None:
+                o[:, pos, :] = o[:, pos, :] + delta
+            return (o,) + tuple(out[1:]) if isinstance(out, tuple) else o
+        handle = target.model.layers[L - 1].register_forward_hook(hook)
+        try:
+            lg = target(input_ids=torch.tensor([prefix], device=dev),
+                        use_cache=False).logits[0, pos]
+        finally:
+            handle.remove()
+        p = torch.softmax(lg.float(), dim=-1)
+        return int(lg.argmax()), float(-(p * torch.log(p + 1e-12)).sum())
+
+    # alpha=0 no-op sanity: hook must reproduce the sealed target argmax
+    nn = min(20, len(samples))
+    sanity = sum(steered(s[0], s[1], Ls[0], None)[0] == s[3]
+                 for s in samples[:nn]) / max(nn, 1)
+
+    out = {"run": run_id, "cas_pair": cas_pair, "n_test": len(samples),
+           "alpha0_sanity": sanity, "alphas": al, "layers": {}}
+    for L in Ls:
+        per_dir, ps_a, ps_acc, ps_ent = {}, [], [], []
+        for dname, d in dirs[L].items():
+            dt = torch.tensor(np.asarray(d), device=dev, dtype=dtype)
+            rate = []
+            for a in al:
+                delta = None if a == 0 else (a * sigma[L]) * dt
+                accs = []
+                for (pfx, pos, prop0, _t0) in samples:
+                    am, ent = steered(pfx, pos, L, delta)
+                    accs.append(int(am == prop0))
+                    if dname == "real":
+                        ps_a.append(a); ps_acc.append(int(am == prop0)); ps_ent.append(ent)
+                rate.append(float(np.mean(accs)) if accs else 0.0)
+            per_dir[dname] = {"accept_rate": rate, "dose": dose_response(al, rate)}
+        med = (entropy_stratified_effect(ps_a, ps_acc, ps_ent) if ps_a
+               else {"beyond_entropy": False, "within_bin_slope": None})
+        verdict = g2_verdict(per_dir["real"]["dose"],
+                             [per_dir["random"]["dose"], per_dir["shuffled"]["dose"]], med)
+        out["layers"][str(L)] = {"sigma": sigma[L], "per_dir": per_dir,
+                                 "entropy_mediation": med, "g2": verdict}
+
+    os.makedirs(f"/artifacts/analysis/{run_id}", exist_ok=True)
+    with open(f"/artifacts/analysis/{run_id}/intervene.json", "w") as f:
+        json.dump(out, f, indent=2)
+    artifacts.commit()
+    print(f"alpha=0 sanity (no-op reproduces sealed argmax): {sanity:.2f} "
+          f"(must be ~1.0 or the hook site/layer index is wrong)")
+    for L, d in out["layers"].items():
+        g = d["g2"]
+        print(f"L{L}: dose_effect={g['dose_effect']:+.4f} beats_controls={g['beats_controls']} "
+              f"beyond_entropy={g['beyond_entropy']} -> causal={g['causal_beyond_entropy']}")
+    return {"alpha0_sanity": sanity,
+            "layers": {L: d["g2"] for L, d in out["layers"].items()}}
+
+
+@app.local_entrypoint()
+def intervene_run(run_id: str = "sweep-2026-07-11T203836", cap_test: int = 100,
+                  layers: str = "12,18", alphas: str = "-2,-1,0,1,2",
+                  cas_pair: str = "qwen", data_dir: str = "data"):
+    """I15 causal-intervention pilot (D023/G2). LAPTOP-SAFE: prefix `modal run
+    --detach`. Check `alpha0_sanity`~1.0 first. Llama: --cas-pair llama."""
+    intervene.remote(run_id, cap_test, layers, alphas, cas_pair, data_dir)
+
+
 @app.function(image=image, volumes=VOLUMES, timeout=2 * 3600)  # CPU-only
 def fit_probes(run_id: str = "sweep-2026-07-11T203836",
                layers: str = "6,12,18,24", eval_split: str = "dev") -> dict:
@@ -1476,7 +1646,8 @@ def probe(run_id: str = "sweep-2026-07-11T203836", layers: str = "6,12,18,24"):
 @app.function(image=image, volumes=VOLUMES, timeout=2 * 3600)  # CPU-only
 def fit_autoresearch(run_id: str = "sweep-2026-07-11T203836",
                      eval_split: str = "dev", layers: str = "6,12,18,24",
-                     spec_json: str = "", seed: int = 0, c_reg: float = 0.1) -> dict:
+                     spec_json: str = "", seed: int = 0, c_reg: float = 0.1,
+                     domain_control: bool = False) -> dict:
     """I13/I23 (D023): score PRE-ROUND candidate signals from the TARGET-frontier
     representation vs the frozen `preround_hardened` baseline (~0.73 AUROC), with
     equal-capacity norm-matched + random controls under prompt-grouped OOF.
@@ -1507,12 +1678,14 @@ def fit_autoresearch(run_id: str = "sweep-2026-07-11T203836",
         specs = default_seed_specs(layer_t)
 
     results = [score_spec(s, acts, meta, base_by_key, eval_split, seed=seed,
-                          c_reg=c_reg)
+                          c_reg=c_reg, include_domain=domain_control)
                for s in specs]
     os.makedirs(f"/artifacts/analysis/{run_id}", exist_ok=True)
-    outp = f"/artifacts/analysis/{run_id}/autoresearch_{eval_split}.json"
+    tag = "_domctl" if domain_control else ""
+    outp = f"/artifacts/analysis/{run_id}/autoresearch_{eval_split}{tag}.json"
     with open(outp, "w") as f:
-        _json.dump({"run": run_id, "eval": eval_split, "results": results}, f,
+        _json.dump({"run": run_id, "eval": eval_split,
+                    "domain_control": domain_control, "results": results}, f,
                    indent=2)
     artifacts.commit()
 
@@ -1578,7 +1751,7 @@ def fit_autoresearch(run_id: str = "sweep-2026-07-11T203836",
 @app.local_entrypoint()
 def autoresearch(run_id: str = "sweep-2026-07-11T203836", eval_split: str = "dev",
                  layers: str = "6,12,18,24", spec_json: str = "", seed: int = 0,
-                 c_reg: float = 0.1):
+                 c_reg: float = 0.1, domain_control: bool = False):
     """Score pre-round candidate signals vs the frozen 0.73 bar (D023).
 
     eval_split stays 'dev' until the deliberate one-shot 'test' pass. LAPTOP-SAFE:
@@ -1587,7 +1760,8 @@ def autoresearch(run_id: str = "sweep-2026-07-11T203836", eval_split: str = "dev
     Read results afterwards with `autoresearch_show` (a detached run's return value
     never reaches your local shell).
     """
-    fit_autoresearch.remote(run_id, eval_split, layers, spec_json, seed, c_reg)
+    fit_autoresearch.remote(run_id, eval_split, layers, spec_json, seed, c_reg,
+                            domain_control)
 
 
 @app.function(image=image, volumes=VOLUMES, timeout=300)  # CPU-only, read-only
@@ -1779,7 +1953,8 @@ def g3(context_len: int = 256, draft_len: int = 8, reps: int = 50):
 def fit_autoresearch_length(run_id: str = "sweep-2026-07-11T203836",
                             eval_split: str = "dev", layers: str = "6,12,18,24",
                             ks: str = "1,2,4,6,8", seed: int = 0,
-                            n_boot: int = 2000, c_reg: float = 0.1) -> dict:
+                            n_boot: int = 2000, c_reg: float = 0.1,
+                            domain_control: bool = False) -> dict:
     """I23/D023 length-aware. Tier-1: per-accepted-length SURVIVAL probes
     P(accepted_len >= k) from the target-frontier representation vs the frozen
     baseline (prompt-grouped OOF, equal-capacity control, prompt-grouped CI). Tier-2:
@@ -1800,14 +1975,17 @@ def fit_autoresearch_length(run_id: str = "sweep-2026-07-11T203836",
     base_by_key = _baseline_by_round(f"/artifacts/traces/{run_id}")
     specs = default_seed_specs(layer_t)
     results = [score_spec_length(s, acts, meta, base_by_key, eval_split, ks=ks_t,
-                                 seed=seed, n_boot=n_boot, c_reg=c_reg)
+                                 seed=seed, n_boot=n_boot, c_reg=c_reg,
+                                 include_domain=domain_control)
                for s in specs]
 
     os.makedirs(f"/artifacts/analysis/{run_id}", exist_ok=True)
-    outp = f"/artifacts/analysis/{run_id}/autoresearch_length_{eval_split}.json"
+    tag = "_domctl" if domain_control else ""
+    outp = f"/artifacts/analysis/{run_id}/autoresearch_length_{eval_split}{tag}.json"
     with open(outp, "w") as f:
         _json.dump({"run": run_id, "eval": eval_split, "ks": list(ks_t),
-                    "c_reg": c_reg, "n_boot": n_boot, "results": results}, f, indent=2)
+                    "c_reg": c_reg, "n_boot": n_boot,
+                    "domain_control": domain_control, "results": results}, f, indent=2)
     artifacts.commit()
 
     scored = [r for r in results if r.get("per_k")]
@@ -1855,8 +2033,9 @@ def fit_autoresearch_length(run_id: str = "sweep-2026-07-11T203836",
 def autoresearch_length(run_id: str = "sweep-2026-07-11T203836",
                         eval_split: str = "dev", layers: str = "6,12,18,24",
                         ks: str = "1,2,4,6,8", seed: int = 0, n_boot: int = 2000,
-                        c_reg: float = 0.1):
+                        c_reg: float = 0.1, domain_control: bool = False):
     """Tier-1 per-length survival probes + Tier-2 length-controller payoff (D023).
     c_reg<=0.1 gives a reproducible (converged) fit. LAPTOP-SAFE: prefix
     `modal run --detach`; results at /artifacts/analysis/<run>/autoresearch_length_*.json."""
-    fit_autoresearch_length.remote(run_id, eval_split, layers, ks, seed, n_boot, c_reg)
+    fit_autoresearch_length.remote(run_id, eval_split, layers, ks, seed, n_boot, c_reg,
+                                   domain_control)
