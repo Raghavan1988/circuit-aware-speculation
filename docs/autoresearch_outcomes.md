@@ -13,9 +13,59 @@ signal / representation**, never a "circuit" or "mechanism", until interventions
   selected on; it stays frozen.
 - **Model pair:** Qwen2.5-7B-Instruct target / Qwen2.5-0.5B-Instruct draft (v1).
   No replication pair (v2 / Llama) run yet.
-- **Reproducibility caveat:** the highest-signal candidate's AUROC magnitude is
-  **not yet reproducible run-to-run** (solver non-convergence; see §6). Signs and
-  CI-robust conclusions are stable; exact magnitudes are not.
+- **Reproducibility (resolved):** the earlier run-to-run AUROC wobble came from an
+  under-regularized (non-converged) 14k-feature fit. Fixed by stronger L2
+  (`c_reg=0.1`), which converges the strictly-convex objective to its unique,
+  thread-independent optimum. The firmed-up figures in §1a use `c_reg=0.1` and
+  **supersede** the exploratory `c_reg=1.0` numbers in §2–§5; note proper
+  regularization *raised* the lift (the old fit was overfit).
+
+## 1a. Firmed-up + length-aware update (c_reg=0.1, n_boot=2000)
+
+Re-run of the top candidate `raw_frontier` with the regularized/converged
+(reproducible) fit, plus per-length survival probes and a length-aware controller.
+These figures supersede §2–§5's exploratory `c_reg=1.0` numbers.
+
+**Predictive lift is stronger and reproducible.** With proper regularization the
+binary (k=1) lift rises to **+0.0740 AUROC, 95% CI [+0.051, +0.099]** (was +0.047
+under the overfit `c_reg=1.0`); equal-capacity random 14k control ≈ 0.53.
+
+**Tier-1 — per-length survival lift P(A≥k)** (dev, n=5321):
+
+| k | P(A≥k) | base | combined | Δauroc | 95% CI | robust |
+|---|---|---|---|---|---|---|
+| 1 | 0.843 | 0.698 | 0.772 | +0.0740 | [+0.051, +0.099] | yes |
+| 2 | 0.743 | 0.690 | 0.729 | +0.0387 | [+0.018, +0.062] | yes |
+| 4 | 0.607 | 0.712 | 0.724 | +0.0110 | [−0.008, +0.032] | no (lone dip) |
+| 6 | 0.512 | 0.700 | 0.722 | +0.0217 | [+0.005, +0.040] | yes |
+| 8 | 0.429 | 0.702 | 0.720 | +0.0181 | [+0.001, +0.037] | yes |
+
+**Revised length story.** The lift is *strongest* at first-token (k=1) but is
+**CI-clean at 4 of 5 thresholds** (only k=4 dips) — so it is **not purely
+first-token**: a weaker but real (~+0.02) signal persists for run-length. This
+supersedes the earlier "first-token, not length" reading; the k=4 dip is likely
+multiple-comparisons noise.
+
+**Tier-2 — length-controller throughput regret** (choose L∈{skip,1,2,4,6,8} from
+predicted survival; realized-throughput regret vs a clairvoyant oracle; lower is
+better):
+
+| cost_draft | reg_base | reg_comb | Δregret | 95% CI | helps_ci |
+|---|---|---|---|---|---|
+| 0.20 | 0.352 | 0.349 | −0.0024 | [−0.010, +0.005] | no |
+| 0.30 | 0.329 | 0.323 | −0.0051 | [−0.014, +0.003] | no |
+| **0.50** | 0.246 | 0.238 | **−0.0087** | **[−0.015, −0.0025]** | **yes** |
+| ≥1.0 | 0.000 | 0.000 | 0.000 | — | no (degenerate skip) |
+
+The representation-driven length controller beats the scalar-baseline controller
+**CI-robustly at one realistic cost (0.5)**, small magnitude (−0.009); the trend is
+coherent (growing to cost 0.5) but a single robust point warrants the same
+multiple-comparisons caution. At cost ≥ 1 the length decision degenerates to skip.
+
+**Net:** the firmed-up picture is modestly *more* positive — a larger, reproducible
+predictive lift (+0.074), a signal that is **not** purely first-token, and a weak
+but CI-robust length-controller win at a realistic cost. Still modest, dev-only,
+one-pair. The binary re-run at `c_reg=0.1` and the v2/Llama transfer remain pending.
 
 ## 1. What was measured
 

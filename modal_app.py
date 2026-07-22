@@ -1469,7 +1469,7 @@ def probe(run_id: str = "sweep-2026-07-11T203836", layers: str = "6,12,18,24"):
 @app.function(image=image, volumes=VOLUMES, timeout=2 * 3600)  # CPU-only
 def fit_autoresearch(run_id: str = "sweep-2026-07-11T203836",
                      eval_split: str = "dev", layers: str = "6,12,18,24",
-                     spec_json: str = "", seed: int = 0) -> dict:
+                     spec_json: str = "", seed: int = 0, c_reg: float = 0.1) -> dict:
     """I13/I23 (D023): score PRE-ROUND candidate signals from the TARGET-frontier
     representation vs the frozen `preround_hardened` baseline (~0.73 AUROC), with
     equal-capacity norm-matched + random controls under prompt-grouped OOF.
@@ -1499,7 +1499,8 @@ def fit_autoresearch(run_id: str = "sweep-2026-07-11T203836",
     else:
         specs = default_seed_specs(layer_t)
 
-    results = [score_spec(s, acts, meta, base_by_key, eval_split, seed=seed)
+    results = [score_spec(s, acts, meta, base_by_key, eval_split, seed=seed,
+                          c_reg=c_reg)
                for s in specs]
     os.makedirs(f"/artifacts/analysis/{run_id}", exist_ok=True)
     outp = f"/artifacts/analysis/{run_id}/autoresearch_{eval_split}.json"
@@ -1569,7 +1570,8 @@ def fit_autoresearch(run_id: str = "sweep-2026-07-11T203836",
 
 @app.local_entrypoint()
 def autoresearch(run_id: str = "sweep-2026-07-11T203836", eval_split: str = "dev",
-                 layers: str = "6,12,18,24", spec_json: str = "", seed: int = 0):
+                 layers: str = "6,12,18,24", spec_json: str = "", seed: int = 0,
+                 c_reg: float = 0.1):
     """Score pre-round candidate signals vs the frozen 0.73 bar (D023).
 
     eval_split stays 'dev' until the deliberate one-shot 'test' pass. LAPTOP-SAFE:
@@ -1578,7 +1580,7 @@ def autoresearch(run_id: str = "sweep-2026-07-11T203836", eval_split: str = "dev
     Read results afterwards with `autoresearch_show` (a detached run's return value
     never reaches your local shell).
     """
-    fit_autoresearch.remote(run_id, eval_split, layers, spec_json, seed)
+    fit_autoresearch.remote(run_id, eval_split, layers, spec_json, seed, c_reg)
 
 
 @app.function(image=image, volumes=VOLUMES, timeout=300)  # CPU-only, read-only

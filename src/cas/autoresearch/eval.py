@@ -306,7 +306,7 @@ def _group_bootstrap_delta(y, oof_base, oof_comb, groups, seed=0, n_boot=1000):
 
 
 def incremental_lift(X_base, X_cand, y, groups, seed=0, n_splits=5,
-                     n_boot=1000) -> dict:
+                     n_boot=1000, c_reg=1.0) -> dict:
     """Score a candidate pre-round feature's lift over the frozen baseline.
 
     Fits, under GroupKFold(n_splits) OOF with within-fold standardization:
@@ -360,7 +360,7 @@ def incremental_lift(X_base, X_cand, y, groups, seed=0, n_splits=5,
         "control_random": np.hstack([X_base, R]),
         "control_norm": np.hstack([X_base, Rn]),
     }
-    oof = {k: _fit_oof(v, y, groups, seed=seed, n_splits=n_splits)
+    oof = {k: _fit_oof(v, y, groups, seed=seed, n_splits=n_splits, c_reg=c_reg)
            for k, v in designs.items()}
     models = {k: _metrics(y, v) for k, v in oof.items()}
 

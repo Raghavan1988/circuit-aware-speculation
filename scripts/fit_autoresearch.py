@@ -123,7 +123,8 @@ def _subset(acts, meta, eval_split):
     return acts_s, meta_s
 
 
-def score_spec(spec: FeatureSpec, acts, meta, base_by_key, eval_split, seed=0):
+def score_spec(spec: FeatureSpec, acts, meta, base_by_key, eval_split, seed=0,
+               c_reg=1.0):
     import numpy as np
 
     from cas.autoresearch.eval import incremental_lift
@@ -136,7 +137,7 @@ def score_spec(spec: FeatureSpec, acts, meta, base_by_key, eval_split, seed=0):
     X_base = _baseline_design(meta_s, base_by_key)
     y = np.array([1 if m["accept"] else 0 for m in meta_s])
     groups = np.array([m["request_id"] for m in meta_s])
-    res = incremental_lift(X_base, X_cand, y, groups, seed=seed)
+    res = incremental_lift(X_base, X_cand, y, groups, seed=seed, c_reg=c_reg)
     res["spec"] = {"name": spec.name, "family": spec.family,
                    "layers": list(spec.layers), "params": spec.params}
     res["eval_split"] = eval_split
