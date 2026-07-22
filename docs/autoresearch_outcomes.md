@@ -43,8 +43,15 @@ signal / representation**, never a "circuit" or "mechanism", until interventions
 - **Only the full representation works.** The cheap/deployable variants (align,
   drift, norm, lowrank) show only small, inconsistent lift — the deployable-cheap
   signal is marginal.
-- **Correlational, not causal.** No interventions yet → "diagnostic signal", never
-  "circuit" (D020 / G2).
+- **Causal — replicated (v1 + Llama).** I15 forward-hook steering: perturbing the
+  first-token acceptance direction disrupts acceptance **~2–10× more than
+  norm-matched controls**, dose-dependently, **beyond entropy**, at all 4 layers on
+  **both** Qwen-v1 (`sealed_fidelity` 0.95) and Llama (`sealed_fidelity` 1.00,
+  controls ≈0) — a **replicated, representation-level causal** result (the direction
+  causally controls the target's next-token agreement-ability; *not* a draft–target
+  "circuit"). Both empirical G2 criteria met; the upgrade to causal language in
+  frozen claims is a human gate (D020). Full write-up:
+  `docs/causal_intervention_report.md`.
 
 ### Blocking (before submission)
 - **Frozen test pass.** Everything is dev-only; **C10 is `UNTESTED`** in
@@ -60,11 +67,12 @@ signal / representation**, never a "circuit" or "mechanism", until interventions
   committed.
 
 ### To do (next steps, highest leverage first)
-1. **G2 interventions (I15) on the first-token direction.** Derive the acceptance
-   direction; ablate / project-out / steer at selected layers × strengths vs
-   norm-matched + random controls; measure the acceptance change. Success upgrades
-   diagnostic → **causal / circuit** — the single biggest strengthening, and the
-   project's headline ambition.
+1. **G2 interventions (I15) — v1 + Llama PASS (empirical G2 met).** Forward-hook
+   steering disrupts acceptance ~2–10× norm-matched controls, dose-dependent, beyond
+   entropy, at all 4 layers, **replicated on both model families**
+   (`docs/causal_intervention_report.md`). Remaining: a **human trips G2** (D020) to
+   use causal language in frozen claims; firm-up — finer layer sweep, a
+   projection-removal (ablation) variant alongside steering, larger cap_test.
 2. **Minimal cheap sufficient statistic.** Does a small low-dim subspace (a few dims
    / one layer) recover most of `raw`'s first-token lift? Turns a predictive result
    into a *deployable* one (today's cheap variants don't clear the bar).
