@@ -89,9 +89,14 @@ def _baseline_by_round(run_dir: str):
 _BASE_COLS = ("history_ema", "prev_target_entropy", "prev_target_margin")
 
 
-def _baseline_design(meta_rows, base_by_key):
-    """X_base for meta_rows (same order), mean-imputed + missing-flag per column
-    (mirrors scripts/fit_baselines._design)."""
+def _baseline_design(meta_rows, base_by_key, include_domain=False):
+    """X_base for meta_rows (same order): the frozen `preround_hardened` numeric
+    stack (mean-imputed + missing-flag per column; mirrors
+    scripts/fit_baselines._design), OPTIONALLY augmented with a one-hot `domain`
+    block -- the C04 domain-controlled baseline. A candidate's lift is confounded
+    on multi-domain corpora unless domain is in the baseline (the representation
+    encodes domain, which predicts acceptance); `include_domain=True` removes that
+    confound so the test becomes "beyond entropy AND domain"."""
     import numpy as np
 
     vals = {c: [] for c in _BASE_COLS}
@@ -104,13 +109,16 @@ def _baseline_design(meta_rows, base_by_key):
             if v is not None:
                 vals[c].append(float(v))
     means = {c: (sum(vs) / len(vs) if vs else 0.0) for c, vs in vals.items()}
+    domains = sorted({m["domain"] for m in meta_rows}) if include_domain else []
     X = []
-    for rec in recs:
+    for m, rec in zip(meta_rows, recs):
         feat = []
         for c in _BASE_COLS:
             v = rec.get(c)
             feat.append(means[c] if v is None else float(v))
             feat.append(1.0 if v is None else 0.0)  # missing flag
+        if include_domain:
+            feat += [1.0 if m.get("domain") == d else 0.0 for d in domains]
         X.append(feat)
     return np.array(X, dtype="float64")
 
@@ -124,7 +132,7 @@ def _subset(acts, meta, eval_split):
 
 
 def score_spec(spec: FeatureSpec, acts, meta, base_by_key, eval_split, seed=0,
-               c_reg=1.0):
+               c_reg=1.0, include_domain=False):
     import numpy as np
 
     from cas.autoresearch.eval import incremental_lift
@@ -134,7 +142,7 @@ def score_spec(spec: FeatureSpec, acts, meta, base_by_key, eval_split, seed=0,
     if not meta_s:
         return {"spec": spec.name, "note": f"no rows on split={eval_split}"}
     X_cand = build_features(spec, acts_s, meta_s)
-    X_base = _baseline_design(meta_s, base_by_key)
+    X_base = _baseline_design(meta_s, base_by_key, include_domain=include_domain)
     y = np.array([1 if m["accept"] else 0 for m in meta_s])
     groups = np.array([m["request_id"] for m in meta_s])
     res = incremental_lift(X_base, X_cand, y, groups, seed=seed, c_reg=c_reg)
@@ -145,7 +153,8 @@ def score_spec(spec: FeatureSpec, acts, meta, base_by_key, eval_split, seed=0,
 
 
 def score_spec_length(spec: FeatureSpec, acts, meta, base_by_key, eval_split,
-                      ks=(1, 2, 4, 6, 8), seed=0, n_boot=1000, c_reg=1.0):
+                      ks=(1, 2, 4, 6, 8), seed=0, n_boot=1000, c_reg=1.0,
+                      include_domain=False):
     """Per-accepted-length survival probes for one FeatureSpec (Tier-1) PLUS the
     length-aware controller payoff (Tier-2).
 
@@ -166,7 +175,7 @@ def score_spec_length(spec: FeatureSpec, acts, meta, base_by_key, eval_split,
     if not meta_s:
         return {"spec": spec.name, "note": f"no rows on split={eval_split}"}
     X_cand = build_features(spec, acts_s, meta_s)
-    X_base = _baseline_design(meta_s, base_by_key)
+    X_base = _baseline_design(meta_s, base_by_key, include_domain=include_domain)
     accepted_len = np.array([int(m["accepted_len"]) for m in meta_s])
     groups = np.array([m["request_id"] for m in meta_s])
     res = length_probe_lift(X_base, X_cand, accepted_len, groups, ks=tuple(ks),
