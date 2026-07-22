@@ -15,7 +15,7 @@ No claim may move to `SUPPORTED` without experiment identifiers, applicable sett
 | C07 | Any controller advantage persists against the best per-domain fixed policy. | UNTESTED | Per-domain held-out comparison | — | — |
 | C08 | The signal or controller transfers under domain and traffic shift without full retuning. | UNTESTED | Shift study with calibration drift and latency regret | — | — |
 | C09 | The principal finding replicates outside the primary Qwen pair. | UNTESTED | Compatible Llama pair or approved Qwen-ratio fallback | — | — |
-| C10 | Next-round acceptance is predictable from cached verified-context representations before any draft compute, at deployable marginal cost. | UNTESTED | Prompt-grouped held-out comparison against post-draft signals (entropy, margin, learned head), with deployed-path overhead measured (I23) | — | **Narrowed 2026-07-11 (I21 R2):** AdaEAGLE (2412.18910; pre-draft length from target verified-context features, EAGLE, uncalibrated, no skip/baselines); Judge Decoding (2501.19309; target-embedding judge **during verify**, relaxes losslessness); WhiFlash (2606.07710; pre-draft drafter routing). Full C10 cell (lossless, calibrated, baseline-controlled, independent drafter, skip-capable) still unoccupied. Baselines must include free frontier entropy/margin at last verified position (cf. 2606.30265). SemanticSpec (2602.03708) does not scoop (mid-verify semantic-relaxed probes). See landscape.md + ledger notes |
+| C10 | Next-round acceptance is predictable from cached verified-context representations before any draft compute, at deployable marginal cost. | UNTESTED (dev-strong + causal 2026-07-22; frozen predictive test pending) | Prompt-grouped held-out comparison against post-draft signals (entropy, margin, learned head), with deployed-path overhead measured (I23) | — | **Narrowed 2026-07-11 (I21 R2):** AdaEAGLE (2412.18910; pre-draft length from target verified-context features, EAGLE, uncalibrated, no skip/baselines); Judge Decoding (2501.19309; target-embedding judge **during verify**, relaxes losslessness); WhiFlash (2606.07710; pre-draft drafter routing). Full C10 cell (lossless, calibrated, baseline-controlled, independent drafter, skip-capable) still unoccupied. Baselines must include free frontier entropy/margin at last verified position (cf. 2606.30265). SemanticSpec (2602.03708) does not scoop (mid-verify semantic-relaxed probes). See landscape.md + ledger notes |
 | C11 | The identified acceptance representation transfers beyond independent drafts to a modern speculator family. | UNTESTED | Cross-speculator evaluation; extension work, only after the core evidence gate (D009) | — | — |
 
 ## Landscape verification notes (I21)
@@ -626,3 +626,42 @@ artifacts `analysis/sweep-v2-f8-2026-07-13/rq2_ci_test.json`,
   the dir). Added `os.makedirs(..., exist_ok=True)` before all three writes;
   re-ran and it sealed.
 - Logged by Claude, 2026-07-13.
+
+## Autoresearch pre-round signal (I13/I23/C10) + causal validation (I15), 2026-07-22
+
+Generator-critic autoresearch loop (D023). Method + full numbers in
+`docs/autoresearch_outcomes.md` and `docs/causal_intervention_report.md`; every
+number script-generated from immutable artifacts.
+
+- **Predictive (dev, domain-controlled, replicated).** A pre-round FIRST-TOKEN
+  acceptance signal from the target's cached verified-context frontier
+  representation beats `preround_hardened + domain` (entropy+margin+history+domain)
+  by **+0.072 (Qwen-v1, 4 domains), +0.112 (Qwen-v2, 7 domains), +0.069 (Llama)**,
+  all CI-clean, beating equal-capacity random/norm-matched controls. Replicated
+  across two model families AND two corpora. Near-zero deployed cost (G3 microbench:
+  ~16 µs probe, 0.015% of a round). Only the full representation clears the bar;
+  cheap variants (lowrank/norm/align/drift) are marginal/inconsistent.
+- **Negative / boundary (recorded per AGENTS.md).** FIRST-TOKEN only: per-length
+  survival probes give null-to-significantly-worse lift at k≥4 on all three
+  settings; a length-aware controller does not benefit (mostly hurts). Does not
+  extend to run-length or length-selection — differentiates from AdaEAGLE (which
+  sets length from features).
+- **Corrected exclusion.** An initial capture-sampling bug (`cap_prompts` + sorted
+  truncation) captured only ~2 domains/run, inflating v2 via a weak
+  summarization-dominated baseline (base AUROC 0.60) and making domain-control
+  vacuous. Fixed with domain-stratified sampling (D025); re-captured (4/7/4 domains)
+  and re-run — the finding survived, confirming it is NOT domain identification. The
+  pre-fix v2 "stronger" reading was an artifact.
+- **Reproducibility.** The exploratory `c_reg=1.0` fit was overfit/non-convergent
+  (AUROC wobbled run-to-run); `c_reg=0.1` (D025) converges the strictly-convex probe
+  to a unique, thread-independent optimum and RAISES the lift (v1 k=1 +0.047→+0.074).
+- **Causal (I15, held-out test rounds, replicated).** Forward-hook steering of the
+  first-token acceptance direction disrupts acceptance **~2–10× more than
+  norm-matched random/shuffled controls**, dose-dependently (peak-at-0), beyond the
+  induced entropy change, at all 4 layers, on BOTH Qwen-v1 (`sealed_fidelity` 0.95)
+  and Llama (1.00). The two empirical G2 criteria are met. Honest scope:
+  representation-level causal control of the target's next-token agreement-ability,
+  NOT a draft–target "circuit"; the LANGUAGE upgrade is a human gate (D020).
+- **C10 status:** dev-strong + causally validated, but the frozen PREDICTIVE test
+  pass is pending; C10 stays `UNTESTED` for the frozen table until then.
+- Logged by Claude, 2026-07-22.

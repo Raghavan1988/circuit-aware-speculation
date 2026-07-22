@@ -20,7 +20,7 @@ Statuses are `OPEN`, `IN_PROGRESS`, `BLOCKED`, and `DONE`. Before starting, add 
 | I12 | DONE | Claude | Train leakage-safe layerwise acceptance probes | I10,I11 | — | GPU/CPU |
 | I13 | IN_PROGRESS | Claude | Evaluate calibration and incremental information | I07,I08,I09,I12 | I23 | CPU |
 | I14 | OPEN | — | Implement compute-optimal selective speculation | I07,I13 | — | GPU |
-| I15 | OPEN | — | Run rejection-direction interventions and controls | I12 | I14 | A100/H100 |
+| I15 | IN_PROGRESS | Claude | Run rejection-direction interventions and controls | I12 | I14 | A100/H100 |
 | I16 | OPEN | — | Run domain- and traffic-shift experiments | I14 | I15,I17 | A100/H100 |
 | I17 | OPEN | — | Add and validate the replication model pair | I03,I04,I06 | I15,I16 | A100/H100 |
 | I18 | OPEN | — | Generate acceptance atlas and primary figures | I11,I13,I14,I15,I16,I17 | — | CPU |
@@ -127,6 +127,24 @@ until the GPU gate passes; no results exist yet. Run order on Modal:
   - Frozen bar = `preround_hardened` (~0.73 AUROC); every candidate must beat it
     AND norm-matched + random controls under prompt-grouped GroupKFold OOF,
     dev-only. "Circuit"/"mechanism" language stays G2-gated (D020).
+
+## Build status (2026-07-22, Claude — I13/I23/I15 autoresearch + causal)
+
+Generator-critic loop delivered the pre-round signal + causal validation (D023,
+D025; `docs/autoresearch_outcomes.md`, `docs/causal_intervention_report.md`).
+
+- **I13/I23 (dev done; frozen test pending):** domain-controlled first-token
+  acceptance lift beyond entropy+domain, +0.072/+0.112/+0.069 (Qwen-v1/v2/Llama),
+  CI-clean, replicated cross-model + cross-corpus, near-zero cost (G3 microbench).
+  First-token only (run-length null-to-harmful; length controller does not benefit).
+  C10 stays `UNTESTED` until the frozen predictive test pass (running).
+- **I15 (causal, replicated):** forward-hook steering of the first-token direction
+  disrupts acceptance ~2–10× norm-matched controls, dose-dependent, beyond entropy,
+  all 4 layers, on Qwen-v1 (`sealed_fidelity` 0.95) + Llama (1.00). Empirical G2 met;
+  G2 language is a human gate (D020). Pure logic + tests in
+  `src/cas/autoresearch/interventions.py`; runner `modal_app.py::intervene`.
+- Capture-sampling bug (2-domain undersampling) found + fixed (stratified, D025);
+  re-captured 4/7/4 domains; finding survived domain control (not domain identity).
 
 ## Acceptance criteria and artifacts
 

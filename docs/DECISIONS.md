@@ -268,3 +268,43 @@ Use dated entries with context, decision, alternatives, and consequences. Do not
   (append-only convention). The backlog build-status note and
   `docs/generator_critic.md` §8 reference the new path. The file is untracked at
   the new location until committed.
+
+## D025 — Autoresearch methodology fixes: stratified capture, regularized fit, domain control, hook-based interventions
+
+- **Date:** 2026-07-22
+- **Context:** The I13/I23 pre-round autoresearch and the I15 causal validation
+  surfaced four methodology choices needing a record (evidence in
+  `docs/autoresearch_outcomes.md`, `docs/causal_intervention_report.md`, and the
+  2026-07-22 claims-ledger note).
+- **Decision:**
+  1. **Domain-stratified capture sampling.** `capture_frontier_activations` selects
+     prompts round-robin across domains, not sorted-then-truncated. The prior
+     `cap_prompts`+sorted truncation captured only ~2 domains/run, inflating the v2
+     lift (weak summarization baseline) and making domain-control vacuous. Capture is
+     also parameterized by `cas_pair` (qwen/llama) and `data_dir` (v1 `data` / v2
+     `data_v2`) with the HF secret, enabling the transfer captures.
+  2. **Regularized, reproducible probe fit (`c_reg=0.1`).** Logistic `C=1.0`
+     under-regularizes a 14k-feature probe: lbfgs does not converge and the iterate
+     is BLAS-thread-dependent, so AUROC wobbles run-to-run. `c_reg=0.1` converges the
+     strictly-convex objective to its unique (thread-independent) optimum and is the
+     right regularization; it also raised the lift (overfit removed). `c_reg` is a
+     threaded parameter; the autoresearch entrypoints default to 0.1.
+  3. **Domain-controlled baseline (C04).** The incremental test adds a one-hot
+     `domain` block to the frozen baseline (`preround_hardened + domain`), so the
+     claim is "beyond entropy AND domain". Required on multi-domain corpora.
+  4. **I15 interventions via forward hooks (deviation from D015's nnsight).** The
+     runner uses transparent PyTorch forward hooks (auditable, no image re-lock);
+     nnsight remains swappable. A `sealed_fidelity` no-op check validates the hook
+     site/layer index; disruption is measured in the self-consistent re-forward
+     frame; the causal verdict is DISRUPTION-based (the intervention is an
+     inverted-U peaking at α=0), not endpoint-monotone.
+- **Alternatives:** sorted-truncation capture (undersamples domains); `C=1.0`
+  (non-reproducible, overfit); domain-free baseline (C04 violation); nnsight now
+  (image re-lock for a pilot); endpoint-monotone verdict (wrong for the inverted-U —
+  a false negative). All rejected for the reasons above.
+- **Consequences:** `modal_app.py` capture/fit/intervene gain
+  `cas_pair`/`data_dir`/`c_reg`/`domain_control`; `_baseline_design` gains
+  `include_domain`; new `src/cas/autoresearch/interventions.py` (+ tests) and
+  `modal_app.py::intervene`. Numbers land in the 2026-07-22 ledger note; C10 stays
+  `UNTESTED` until the frozen predictive test pass; mechanistic language stays
+  G2-gated (D020) despite the empirical causal pass.
