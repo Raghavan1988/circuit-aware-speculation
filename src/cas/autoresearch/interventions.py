@@ -130,15 +130,51 @@ def entropy_stratified_effect(alpha, accept, entropy, n_bins=8) -> dict:
             "beyond_entropy": bool(abs(pooled) > 0.01)}     # magnitude threshold
 
 
-def g2_verdict(dose_real, dose_controls, mediation) -> dict:
-    """Combine one layer's results into a G2 sub-verdict: dose-responsive AND beats
-    controls AND beyond-entropy. Layer-specificity and replication are judged ACROSS
-    runs (a human gate, D020) — this never emits 'circuit'/'mechanism' language."""
-    beats = beats_controls(dose_real["effect"], [d["effect"] for d in dose_controls])
-    causal = bool(dose_real["monotone"] and abs(dose_real["effect"]) > 0
-                  and beats and mediation["beyond_entropy"])
-    return {"dose_effect": dose_real["effect"], "dose_monotone": dose_real["monotone"],
-            "beats_controls": beats, "beyond_entropy": mediation["beyond_entropy"],
-            "causal_beyond_entropy": causal,
-            "language": "diagnostic signal (G2 not tripped until a human confirms "
-                        "layer-specificity + replication, D020)"}
+def disruption(alphas, accept_rates) -> dict:
+    """Causal metric for the OBSERVED inverted-U (peak-at-0) intervention shape:
+    steering away from α=0 in EITHER direction degrades acceptance (perturbing a
+    feature direction breaks the behavior it carries). Endpoint/monotone metrics
+    are wrong for this shape; use disruption instead. Returns:
+
+      disruption   = accept(α=0) − mean(accept at α≠0)   (>0 if steering breaks it)
+      abs_monotone = acceptance decreases monotonically as |α| grows (dose in |α|)
+      peak_at_zero = α=0 is the maximum
+
+    The causal test is real disruption ≫ control (random/shuffled) disruption."""
+    a = np.asarray(alphas, dtype=float)
+    y = np.asarray(accept_rates, dtype=float)
+    zi = int(np.argmin(np.abs(a)))
+    y0 = float(y[zi])
+    others = y[np.arange(len(a)) != zi]
+    disrupt = float(y0 - np.mean(others)) if len(others) else 0.0
+    absa = np.abs(a)
+    levels = sorted(set(np.round(absa, 9).tolist()))
+    means = [float(np.mean(y[np.round(absa, 9) == u])) for u in levels]   # |α|=0 first
+    return {"disruption": disrupt,
+            "abs_monotone": bool(np.all(np.diff(means) <= 1e-9)),
+            "peak_at_zero": bool(y0 >= y.max() - 1e-9)}
+
+
+def g2_verdict(disrupt_real, disrupt_controls, mediation, dose_real=None) -> dict:
+    """Causal sub-verdict for the disruption-shaped intervention: steering along the
+    direction disrupts acceptance MORE than norm-matched controls, dose-dependently
+    (in |α|), beyond the induced entropy change. `disrupt_real`/`disrupt_controls`
+    come from ``disruption()``; `dose_real` (optional, from ``dose_response``)
+    carries the directional asymmetry as secondary info. Never emits "circuit"/
+    "mechanism" language — layer-specificity + replication are a human gate across
+    runs (D020)."""
+    beats = beats_controls(disrupt_real["disruption"],
+                           [d["disruption"] for d in disrupt_controls])
+    causal = bool(disrupt_real["disruption"] > 0 and disrupt_real["abs_monotone"]
+                  and beats and mediation.get("beyond_entropy", False))
+    out = {"disruption": disrupt_real["disruption"],
+           "dose_abs_monotone": disrupt_real["abs_monotone"],
+           "peak_at_zero": disrupt_real["peak_at_zero"],
+           "beats_controls": beats,
+           "beyond_entropy": mediation.get("beyond_entropy", False),
+           "causal_beyond_entropy": causal,
+           "language": "diagnostic signal (G2 not tripped until a human confirms "
+                       "layer-specificity + replication, D020)"}
+    if dose_real is not None:
+        out["directional_asymmetry"] = dose_real.get("effect")
+    return out
