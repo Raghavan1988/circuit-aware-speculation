@@ -9,7 +9,7 @@ No claim may move to `SUPPORTED` without experiment identifiers, applicable sett
 | C01 | Draft hidden states contain acceptance information beyond entropy, margin, history, and domain. | PARTIAL (negative-leaning) | Prompt-grouped incremental comparison on held-out prompts | I10/I12 dev probe, run sweep-2026-07-11T203836 (2026-07-12) | **Not supported for a LINEAR probe on the Qwen pair:** hidden-only AUROC peaks 0.803 (layer 18) vs surface 0.870; hidden⊕surface adds ≤ +0.006 AUROC (layers 18/24 only, not shown significant). Cheap surface signals are a strong, hard-to-beat baseline. Scope: linear probe, 4 layers, 120 dev prompts, 42k tokens. Nonlinear probes / other layers / the Llama pair (I17) untested. See Run log 2026-07-12 |
 | C02 | Acceptance information becomes accessible at identifiable draft-model layers. | UNTESTED | Layerwise probes replicated across domains and a second model setting | — | — |
 | C03 | Rejection-associated directions have a controlled effect on draft–target divergence or acceptance. | PARTIAL | Dose-response intervention with random and norm-matched controls | I15 intervene, held-out test rounds of `sweep-2026-07-11T203836` (Qwen-v1) and `sweep-llama-f8-2026-07-13` (Llama); `analysis/<run>/intervene.json` (2026-07-22) | **First-token acceptance only** (does not extend to run-length, per the I23 survival negative). Steering the first-token acceptance direction in the TARGET's cached frontier representation disrupts acceptance ~2–10× more than norm-matched random/shuffled controls, dose-dependently, beyond induced entropy, at all 4 layers, both families. Scope: representation-level control of the target's next-token agreement-ability — NOT a draft–target "circuit"; language upgrade is a human gate (D020). See causal_intervention_report.md + 2026-07-22 note |
-| C04 | Acceptance behavior differs systematically across token categories and generation phases. | UNTESTED | Acceptance atlas with paired uncertainty and annotation validation | — | Domain-level acceptance differences are prior (arXiv:2604.14682, I21 verified 2026-07-10); that work does **not** cover overlapping token-category labels or a fine-grained phase atlas — position as domain control/context. Annotation tooling landed I11 (`cas.annotate` v1.0.0); atlas evidence still pending I07+I18 |
+| C04 | Acceptance behavior differs systematically across token categories and generation phases. | SUPPORTED — CATEGORY axis only (frozen test 3/3, 2026-07-22); phase axis REFUTED-as-inconsistent | Acceptance atlas with paired uncertainty and annotation validation | `c04_atlas_{dev,test}.json` on all three settings (machinery 80ee48b; pre-registration 968c425); structural-vs-entity contrast on test: overall +0.195/+0.210/+0.118 (p=0), within-domain CI-clean in 15/15 cells incl. the pre-registered expected-null (Llama-code +0.067) | **Category axis only:** the phase half is null on Qwen (spread ≤0.9pp both corpora) and monotone-increasing on Llama only (descriptive; length/mix confound possible) — no cross-family phase claim. Weakest cell: Qwen-v1 summ (+0.054, p=0.027, CI lo −0.002). Domain-grain prior (arXiv:2604.14682) reproduced as CONTROL; our axis is category-within-domain. Labels: overlapping categories v1.0.0, counterfactual fixed_8 `target_match`. Llama `reasoning_transition` is not low (Qwen-only); Llama `special` ≈0.007 anomaly recorded descriptively |
 | C05 | Selective speculation with a skip action reduces wasted compute relative to adaptive-length baselines. | UNTESTED | Held-out comparison including all overhead | — | — |
 | C06 | The circuit-aware controller improves net latency over the best global fixed policy. | UNTESTED | Paired held-out wall-clock study with uncertainty | — | **Harness-dependent (2026-07-12, T3.4):** the routing headroom this claim needs is ~5% on the eager launch-bound harness (best fixed action = skip) and only reaches ~25–46% under a serving-grade fused+graph-captured draft. Any net-latency claim must state the execution mode. See Run log 2026-07-12 |
 | C07 | Any controller advantage persists against the best per-domain fixed policy. | UNTESTED | Per-domain held-out comparison | — | — |
@@ -853,3 +853,37 @@ per-setting by script over `c04_atlas_test.json`):**
   overlapping labels v1.0.0; fixed_8 counterfactual labels; 2 families, 2
   corpora). Any failure → PARTIAL with the specific failing cells recorded.
 - Logged by Claude, 2026-07-22 (before the test unblinding).
+
+### 2026-07-22 — C04 frozen TEST pass: PASS 3/3 on all pre-registered criteria (C04 → SUPPORTED, category axis)
+
+One-shot test evaluation (`c04_atlas_test.json` × 3), verdicts computed by
+script against the pre-registered T1–T4 exactly as committed in 968c425.
+
+| criterion | Qwen-v1 (152,592 tok) | Qwen-v2 (209,160) | Llama (124,000) |
+|---|---|---|---|
+| T1 overall contrast | **+0.1947** [+0.172,+0.216] p=0 | **+0.2104** [+0.193,+0.228] p=0 | **+0.1177** [+0.103,+0.134] p=0 |
+| T2 within-domain | 4/4 CI-clean | 7/7 CI-clean | 3/3 CI-clean + code |
+| T3 tail stability | PASS (marg 0.742) | PASS (0.688) | PASS (0.833) |
+| T4 phase spread (Qwen ≤0.03) | 0.0084 PASS | 0.0036 PASS | 0.0589 (descriptive) |
+
+- **PASS 3/3 → C04 → SUPPORTED, category axis, scope-limited.** The
+  structural-vs-entity acceptance structure (code_delimiter/operator/number ≫
+  named_entity/reasoning_transition) is real, domain-controlled, and replicates
+  across both model families and both corpora on frozen test data.
+- **The pre-registered expected-null reversed positive:** Llama-code came in
+  **+0.0674 [+0.0304, +0.1097]** — the dev null was noise at a 0.913 acceptance
+  ceiling, and the criterion (no negative reversal) is exceeded: 15/15 domain
+  cells are CI-clean positive on test.
+- **Weakest cell, reported:** Qwen-v1 summ +0.0544, p(Δ≤0)=0.027 (percentile CI
+  lo −0.002) — passes the pre-registered p<0.05 criterion but is the margin to
+  watch in any re-run.
+- **Phase axis outcome:** decisively flat on Qwen (test spreads 0.8pp/0.4pp —
+  tighter than the 3pp criterion); Llama monotone (prefix 0.794 → mid 0.824 →
+  late 0.853) recorded descriptively only. C04's "generation phases" half is
+  narrowed out of the claim; absolute-position phase bins carry no
+  cross-family acceptance structure at this grain.
+- Consequences: I18's atlas-evidence half is done (figures remain); the atlas +
+  contrast tables are the natural core of the companion analysis manuscript.
+  C04 claim language stays representation-free (no G2 implications — this is
+  behavioral structure, not internal-state evidence).
+- Logged by Claude, 2026-07-22.
