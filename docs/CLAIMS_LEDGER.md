@@ -15,7 +15,7 @@ No claim may move to `SUPPORTED` without experiment identifiers, applicable sett
 | C07 | Any controller advantage persists against the best per-domain fixed policy. | UNTESTED | Per-domain held-out comparison | — | — |
 | C08 | The signal or controller transfers under domain and traffic shift without full retuning. | UNTESTED | Shift study with calibration drift and latency regret | — | — |
 | C09 | The principal finding replicates outside the primary Qwen pair. | UNTESTED | Compatible Llama pair or approved Qwen-ratio fallback | — | — |
-| C10 | Next-round acceptance is predictable from cached verified-context representations before any draft compute, at deployable marginal cost. | SUPPORTED (first-token scope; frozen test 3/3, 2026-07-22) | Prompt-grouped held-out comparison against post-draft signals (entropy, margin, learned head), with deployed-path overhead measured (I23) | I13/I23 frozen test pass: `autoresearch_test_domctl.json` on `sweep-2026-07-11T203836` (Δauroc +0.0755 [+0.0625,+0.0884]), `sweep-v2-f8-2026-07-13` (+0.0918 [+0.0727,+0.1108]), `sweep-llama-f8-2026-07-13` (+0.0542 [+0.0386,+0.0708]); all p(Δ≤0)=0, controls-clean, domain-controlled; causal I15 (2026-07-22 note) | **Narrowed 2026-07-11 (I21 R2):** AdaEAGLE (2412.18910; pre-draft length from target verified-context features, EAGLE, uncalibrated, no skip/baselines); Judge Decoding (2501.19309; target-embedding judge **during verify**, relaxes losslessness); WhiFlash (2606.07710; pre-draft drafter routing). Full C10 cell (lossless, calibrated, baseline-controlled, independent drafter, skip-capable) still unoccupied. Baselines must include free frontier entropy/margin at last verified position (cf. 2606.30265). SemanticSpec (2602.03708) does not scoop (mid-verify semantic-relaxed probes). See landscape.md + ledger notes |
+| C10 | Next-round acceptance is predictable from cached verified-context representations before any draft compute, at deployable marginal cost. | SUPPORTED (first-token scope; frozen test 3/3 under BOTH protocols, 2026-07-22) | Prompt-grouped held-out comparison against post-draft signals (entropy, margin, learned head), with deployed-path overhead measured (I23) | I13/I23 frozen test pass, two protocols. Within-test OOF (`autoresearch_test_domctl.json`): Δauroc +0.0755/+0.0918/+0.0542 (Qwen-v1/v2/Llama, pass-1 archived; redo reproduces to ±0.001). STRICT dev→test transfer, nothing fit on test (`autoresearch_frozen_transfer_domctl.json`): **+0.0555 [+0.0414,+0.0700] / +0.1027 [+0.0830,+0.1242] / +0.0393 [+0.0225,+0.0565]**; all p(Δ≤0)=0, controls-clean, domain-controlled. Causal I15 (2026-07-22 note). Decision-proxy `credible_systems` is protocol-sensitive on Qwen-v1 (strict: robust at one cost only) — wall-clock systems claim stays G3-gated | **Narrowed 2026-07-11 (I21 R2):** AdaEAGLE (2412.18910; pre-draft length from target verified-context features, EAGLE, uncalibrated, no skip/baselines); Judge Decoding (2501.19309; target-embedding judge **during verify**, relaxes losslessness); WhiFlash (2606.07710; pre-draft drafter routing). Full C10 cell (lossless, calibrated, baseline-controlled, independent drafter, skip-capable) still unoccupied. Baselines must include free frontier entropy/margin at last verified position (cf. 2606.30265). SemanticSpec (2602.03708) does not scoop (mid-verify semantic-relaxed probes). See landscape.md + ledger notes |
 | C11 | The identified acceptance representation transfers beyond independent drafts to a modern speculator family. | UNTESTED | Cross-speculator evaluation; extension work, only after the core evidence gate (D009) | — | — |
 
 ## Landscape verification notes (I21)
@@ -709,4 +709,63 @@ three settings. Artifacts: `analysis/<run>/autoresearch_test_domctl.json`.
   dev-measured) — a full serving-path wall-clock claim stays G3-gated;
   (d) counterexamples/limits vs AdaEAGLE / Judge Decoding / WhiFlash unchanged
   (see C10 row); novelty re-check (I21) still due before manuscript freeze.
+- Logged by Claude, 2026-07-22.
+
+### 2026-07-22 (later) — C10 frozen pass REDONE + strict dev→test transfer: 3/3 PASS under both protocols
+
+Owner-directed redo of the frozen pass, plus a STRICTER protocol added the same
+day. Artifacts: live `autoresearch_test_domctl.json` (redo) and NEW
+`autoresearch_frozen_transfer_domctl.json` per run; the first-pass and the
+pre-existing v2 files are preserved under `analysis/<run>/archive/`.
+
+**(1) Redo of the pre-registered within-test-OOF pass — conclusions reproduce;
+numeric wobble bounded.** Same code, same artifacts, fresh containers:
+
+| setting | pass-1 Δauroc (archived) | redo Δauroc | conclusion flags |
+|---|---|---|---|
+| Qwen-v1 | +0.0755 | +0.0761 | identical (win, controls, credible 3/3) |
+| Qwen-v2 | +0.0918 | +0.0918 | identical |
+| Llama | +0.0542 | +0.0530 | identical |
+
+Reported AUROC reproduces to **~±0.001 across containers** (BLAS reduction-order
+noise in the 14k-feature lbfgs fit; binned ECE wobbles more, e.g. v1 combined
+0.018→0.024). This is ~10× smaller than the CI half-widths (~±0.013), so no
+conclusion is sensitive to it. **Correction to the earlier integrity note:** the
+pre-existing v2 file's +0.0906 vs the pre-registered +0.0918 is consistent with
+this same container wobble — the "earlier code state" attribution was
+over-specific. **D025 refinement:** `c_reg=0.1` gives a unique optimum at the
+objective level, but the reported AUROC is reproducible to ~±0.001 across
+containers, not bit-identical.
+
+**(2) NEW strict frozen dev→test transfer (`score_spec_frozen` /
+`frozen_transfer_lift`, commits cb2392d+06c62d2).** The within-test-OOF protocol
+never *selects* on test but does *fit* fold models on test rows; the strict
+protocol fits NOTHING on test — scaler, probe, equal-capacity controls,
+imputation means, domain vocabulary, and Platt calibrator are all dev-frozen and
+the untouched test rows are scored exactly once. Pre-registered criterion
+unchanged (Δauroc>0, grouped-CI p(Δ≤0)<0.05, beats controls, 3/3):
+
+| setting | n_dev→n_test | base | combined | Δauroc | 95% CI | p(Δ≤0) | ctrl | credible_sys |
+|---|---|---|---|---|---|---|---|---|
+| Qwen-v1 | 11,586→11,982 | 0.6603 | 0.7158 | **+0.0555** | [+0.0414, +0.0700] | 0.000 | 0.542 | **no** (robust at cost 2.0 only) |
+| Qwen-v2 | 6,931→7,191 | 0.6259 | 0.7285 | **+0.1027** | [+0.0830, +0.1242] | 0.000 | 0.528 | yes (1.0–9.0) |
+| Llama | 9,659→9,610 | 0.7129 | 0.7523 | **+0.0393** | [+0.0225, +0.0565] | 0.000 | 0.559 | yes (2.0, 4.0) |
+
+- **Predictive PASS 3/3 under the strictest protocol** — the C10 `SUPPORTED`
+  status stands on the stronger footing. Deltas move v1 −0.021 / Llama −0.014 /
+  v2 +0.011 vs within-test OOF — small shifts in both directions, no
+  overfitting signature.
+- **Honest boundaries surfaced by the strict protocol:** (a) on Qwen-v1 the
+  calibrated decision-regret proxy is CI-robust at only ONE cost (2.0), so the
+  `credible_systems` flag fails there — the decision-proxy robustness is
+  protocol-sensitive; the authoritative systems claim was and remains G3-gated
+  wall-clock, untouched by this. (b) Calibration transfer is imperfect: combined
+  test ECE 0.021–0.037 (dev-OOF-trained Platt applied to a full-dev-fit score
+  distribution — mismatch documented in `frozen_transfer_lift`'s docstring);
+  ranking metrics are unaffected.
+- Unit tests: `tests/test_autoresearch_frozen.py` (5 tests: transfer detects a
+  real signal, noise fails its dev-frozen control, determinism, Platt-helper
+  equivalence, dev-frozen imputation/vocabulary), plus the existing eval tests
+  unchanged — `PYTHONPATH=src python -m pytest tests/test_autoresearch_frozen.py
+  tests/test_autoresearch_eval.py -q`.
 - Logged by Claude, 2026-07-22.
