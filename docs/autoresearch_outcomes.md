@@ -59,9 +59,12 @@ signal / representation**, never a "circuit" or "mechanism", until interventions
   domain-controlled, on the untouched test split of all three settings: Δauroc
   +0.0755 (Qwen-v1) / +0.0918 (Qwen-v2) / +0.0542 (Llama), all p(Δ≤0)=0,
   controls-clean. C10 → `SUPPORTED` (first-token scope). See the claims ledger.
-- **Novelty re-check (I21).** Refresh the landscape scan and position explicitly vs
-  AdaEAGLE / Judge Decoding / WhiFlash (and anything newer) before freezing "C10
-  unoccupied".
+- **Novelty re-check (I21) — DONE 2026-07-22: cell UNOCCUPIED.** Adversarially-
+  verified sweep (12 papers primary-verified + 4 prior-verified adjacents; all
+  claims 3-0). AdaEAGLE confirmed as the 3/8-criteria nearest neighbor (length,
+  uncalibrated, no skip, no baselines); theory 2606.30265 grounds the margin
+  baseline. One residual: re-run the citing sweep at manuscript freeze. See
+  landscape.md §I21 2026-07-22 + the dated ledger note.
 - **Claims-ledger + manuscript.** Move C10 to a supported claim; build the two
   headline figures (I18) and the anonymous manuscript (I19); keep G2-gated language.
 - **Uncommitted work.** The capture-sampling fix, `pair`/`data_dir`/`c_reg`/

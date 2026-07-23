@@ -15,7 +15,7 @@ No claim may move to `SUPPORTED` without experiment identifiers, applicable sett
 | C07 | Any controller advantage persists against the best per-domain fixed policy. | UNTESTED | Per-domain held-out comparison | — | — |
 | C08 | The signal or controller transfers under domain and traffic shift without full retuning. | UNTESTED | Shift study with calibration drift and latency regret | — | — |
 | C09 | The principal finding replicates outside the primary Qwen pair. | UNTESTED | Compatible Llama pair or approved Qwen-ratio fallback | — | — |
-| C10 | Next-round acceptance is predictable from cached verified-context representations before any draft compute, at deployable marginal cost. | SUPPORTED (first-token scope; frozen test 3/3 under BOTH protocols, 2026-07-22) | Prompt-grouped held-out comparison against post-draft signals (entropy, margin, learned head), with deployed-path overhead measured (I23) | I13/I23 frozen test pass, two protocols. Within-test OOF (`autoresearch_test_domctl.json`): Δauroc +0.0755/+0.0918/+0.0542 (Qwen-v1/v2/Llama, pass-1 archived; redo reproduces to ±0.001). STRICT dev→test transfer, nothing fit on test (`autoresearch_frozen_transfer_domctl.json`): **+0.0555 [+0.0414,+0.0700] / +0.1027 [+0.0830,+0.1242] / +0.0393 [+0.0225,+0.0565]**; all p(Δ≤0)=0, controls-clean, domain-controlled. Causal I15 (2026-07-22 note). Decision-proxy `credible_systems` is protocol-sensitive on Qwen-v1 (strict: robust at one cost only) — wall-clock systems claim stays G3-gated | **Narrowed 2026-07-11 (I21 R2):** AdaEAGLE (2412.18910; pre-draft length from target verified-context features, EAGLE, uncalibrated, no skip/baselines); Judge Decoding (2501.19309; target-embedding judge **during verify**, relaxes losslessness); WhiFlash (2606.07710; pre-draft drafter routing). Full C10 cell (lossless, calibrated, baseline-controlled, independent drafter, skip-capable) still unoccupied. Baselines must include free frontier entropy/margin at last verified position (cf. 2606.30265). SemanticSpec (2602.03708) does not scoop (mid-verify semantic-relaxed probes). See landscape.md + ledger notes |
+| C10 | Next-round acceptance is predictable from cached verified-context representations before any draft compute, at deployable marginal cost. | SUPPORTED (first-token scope; frozen test 3/3 under BOTH protocols, 2026-07-22) | Prompt-grouped held-out comparison against post-draft signals (entropy, margin, learned head), with deployed-path overhead measured (I23) | I13/I23 frozen test pass, two protocols. Within-test OOF (`autoresearch_test_domctl.json`): Δauroc +0.0755/+0.0918/+0.0542 (Qwen-v1/v2/Llama, pass-1 archived; redo reproduces to ±0.001). STRICT dev→test transfer, nothing fit on test (`autoresearch_frozen_transfer_domctl.json`): **+0.0555 [+0.0414,+0.0700] / +0.1027 [+0.0830,+0.1242] / +0.0393 [+0.0225,+0.0565]**; all p(Δ≤0)=0, controls-clean, domain-controlled. Causal I15 (2026-07-22 note). Decision-proxy `credible_systems` is protocol-sensitive on Qwen-v1 (strict: robust at one cost only) — wall-clock systems claim stays G3-gated. Novelty re-check 2026-07-22 (I21): **cell still unoccupied** across 12 newly-verified + 4 previously-verified adjacent works; re-run citing sweep at manuscript freeze (see landscape.md §I21 2026-07-22) | **Narrowed 2026-07-11 (I21 R2):** AdaEAGLE (2412.18910; pre-draft length from target verified-context features, EAGLE, uncalibrated, no skip/baselines); Judge Decoding (2501.19309; target-embedding judge **during verify**, relaxes losslessness); WhiFlash (2606.07710; pre-draft drafter routing). Full C10 cell (lossless, calibrated, baseline-controlled, independent drafter, skip-capable) still unoccupied. Baselines must include free frontier entropy/margin at last verified position (cf. 2606.30265). SemanticSpec (2602.03708) does not scoop (mid-verify semantic-relaxed probes). See landscape.md + ledger notes |
 | C11 | The identified acceptance representation transfers beyond independent drafts to a modern speculator family. | UNTESTED | Cross-speculator evaluation; extension work, only after the core evidence gate (D009) | — | — |
 
 ## Landscape verification notes (I21)
@@ -768,4 +768,43 @@ unchanged (Δauroc>0, grouped-CI p(Δ≤0)<0.05, beats controls, 3/3):
   equivalence, dev-frozen imputation/vocabulary), plus the existing eval tests
   unchanged — `PYTHONPATH=src python -m pytest tests/test_autoresearch_frozen.py
   tests/test_autoresearch_eval.py -q`.
+- Logged by Claude, 2026-07-22.
+
+### 2026-07-22 — I21 novelty re-check for the C10 freeze: cell UNOCCUPIED (adversarially-verified sweep)
+
+Multi-agent verified literature sweep (100 agents; 24 claims, all surviving 3-0
+adversarial verification; 12 papers verified on primary arXiv pages, most
+full-text). Full per-paper table + criterion matrix in `docs/landscape.md`
+§"I21, 2026-07-22".
+
+- **Verdict: the C10 cell is unoccupied as of 2026-07-22** — no verified work
+  combines pre-round timing × target cached-frontier representation × lossless
+  exact-match × calibration × control vs free entropy/margin/history × independent
+  drafter × skip decision × first-token target. Coverage = 12 papers verified this
+  round ∪ the four adjacent works primary-verified in the earlier I21 rounds
+  (WhiFlash, SemanticSpec, 2604.14682, Not-a-Bandit — no surviving claims in this
+  round's harness, an attrition artifact, not a refutation; the 2026-07-10/11
+  in-repo verifications stand).
+- **AdaEAGLE (2412.18910) confirmed as the primary differentiation target, 3/8
+  criteria:** LDLP consumes exactly C10's signal class and timing (verbatim §3.2:
+  embedding + final-layernorm target hidden state at the last validated-prefix
+  token, pre-draft) but predicts LENGTH via uncalibrated scalar L1 regression, is
+  deliberately logit-free (no entropy/margin baselines anywhere), has no skip
+  action, and uses the EAGLE trained head. Length-classification is a losing
+  ablation in their own §4.3.2 — convergent with our finding that the frontier
+  signal is first-token, not length.
+- **Theory grounding (2606.30265):** margin certificates for strict greedy
+  formalize the top-1/top-2 margin as carrying the governing variable → C10's
+  margin-baseline control is theory-mandated. Open manuscript question logged: does
+  the certificate imply a ceiling on probe headroom over the margin baseline?
+- **New rows added to landscape.md:** HVD (2606.01019), SpecLA (2607.16673, v1
+  18 Jul 2026 — newest in window), Speculative Verification (2509.24328), AdaSpec
+  (2503.05096, ex-SpecServe; name-collision warning vs 2510.19779). All fail the
+  cell on ≥5 criteria each.
+- **Caveats:** citing-papers sweeps for AdaEAGLE/Judge/WhiFlash produced no
+  surviving claims — a very recent citer could exist unseen; **re-run the citing
+  sweep at manuscript freeze**. DSpark head-input wording differs between our two
+  full-text reads (hidden-states vs confidence features) — re-quote before quoting;
+  not decisive for C10. One refuted claim recorded for transparency: AdaSpec does
+  NOT articulate the pre-round gap (0-3) — never cite it as naming C10's gap.
 - Logged by Claude, 2026-07-22.
