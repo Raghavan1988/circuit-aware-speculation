@@ -103,3 +103,46 @@ def test_measured_costs_from_round_rows():
              "latency_ns": {"draft": 300, "verify": 400, "controller": 5}}]
     costs = measured_costs_from_rounds(rows)
     assert costs == {4: (305 + 705) / 2}
+
+
+def test_bootstrap_delta_ci_separated_pools():
+    from cas.analysis.atlas import bootstrap_delta_ci
+
+    # 30 prompts; pool A accepts 9/10 per prompt, pool B 2/10 -> clean contrast
+    pa = {f"p{i}": [10, 9] for i in range(30)}
+    pb = {f"p{i}": [10, 2] for i in range(30)}
+    d = bootstrap_delta_ci(pa, pb, n_boot=300, seed=0)
+    assert d["delta"] == pytest.approx(0.7)
+    assert d["lo"] > 0.0                      # CI excludes 0
+    assert d["p_delta_le_0"] == 0.0
+    assert d["n_boot_effective"] == 300
+
+
+def test_bootstrap_delta_ci_null_contrast_straddles_zero():
+    from cas.analysis.atlas import bootstrap_delta_ci
+
+    # identical per-prompt counts, disjoint prompt ids -> exact null contrast
+    pa = {f"p{i}": [10, 5 + (i % 3)] for i in range(30)}
+    pb = {f"q{i}": [10, 5 + (i % 3)] for i in range(30)}
+    d = bootstrap_delta_ci(pa, pb, n_boot=300, seed=0)
+    assert d["delta"] == pytest.approx(0.0)
+    assert d["lo"] <= 0.0 <= d["hi"]          # no real contrast
+
+
+def test_bootstrap_delta_ci_deterministic_and_paired():
+    from cas.analysis.atlas import bootstrap_delta_ci
+
+    # shared prompts between pools (the category-pool case) + determinism
+    pa = {f"p{i}": [8, 6] for i in range(20)}
+    pb = {f"p{i}": [12, 5] for i in range(20)}
+    d1 = bootstrap_delta_ci(pa, pb, n_boot=200, seed=3)
+    d2 = bootstrap_delta_ci(pa, pb, n_boot=200, seed=3)
+    assert d1 == d2
+    assert d1["lo"] <= d1["delta"] <= d1["hi"]
+
+
+def test_bootstrap_delta_ci_empty_pool():
+    from cas.analysis.atlas import bootstrap_delta_ci
+
+    d = bootstrap_delta_ci({}, {"p1": [5, 3]}, n_boot=50, seed=0)
+    assert d["n_boot_effective"] == 0 and d["delta"] == 0.0

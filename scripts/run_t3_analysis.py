@@ -105,16 +105,19 @@ def oracle_headroom(run_dir):
     }
 
 
-def _split_by_request(run_dir, summaries):
+def _split_by_request(run_dir, summaries, data_dir="data"):
     """Recover the prompt-grouped split per request.
 
     The sweep stamped `RequestSummary.split` via assignment.get(prompt_id) but
     the split manifest is keyed by prompt_hash, so the stored column is all
     "unknown" (see analysis note; corpus otherwise valid). Recover it here by
     joining request -> prompt_hash -> split through the frozen manifest, which
-    is deterministic from the immutable inputs (no re-run needed)."""
+    is deterministic from the immutable inputs (no re-run needed).
+
+    `data_dir` selects the corpus manifest ("data" for v1, "data_v2" for the
+    v2 corpus), mirroring the D025 capture threading."""
     data_root = os.path.dirname(os.path.dirname(run_dir.rstrip("/")))  # .../ artifacts
-    manifest_path = os.path.join(data_root, "data", "split_manifest.json")
+    manifest_path = os.path.join(data_root, data_dir, "split_manifest.json")
     with open(manifest_path) as f:
         assignment = json.load(f)["assignment"]  # {prompt_hash: dev|test}
     return {s["request_id"]: assignment.get(s["prompt_hash"], "unknown")
@@ -233,6 +236,142 @@ def atlas(run_dir, min_n=50, n_boot=1000):
     return {"policy": LABEL_POLICY, "acceptance_label": "target_match",
             "n_tokens": len(rows), "min_n": min_n,
             "table": atlas_table(rows, min_n=min_n, n_boot=n_boot)}
+
+
+# C04 contrast pools, fixed from the recorded Qwen-v1 atlas pattern (M3 note,
+# claims ledger 2026-07-12): structural/code-adjacent tokens accept high,
+# entity/reasoning tokens accept low. The pools are part of the pre-registered
+# C04 claim; the test-split pass evaluates exactly these.
+C04_HIGH = ("code_delimiter", "operator", "number")
+C04_LOW = ("named_entity", "reasoning_transition")
+
+
+def _pool_prompts(rows, cats):
+    """{request_id: [n_tokens, n_accepted]} over rows carrying ANY category in
+    `cats` (overlapping labels: a token joins the pool once even if it carries
+    several pool categories)."""
+    cs = set(cats)
+    pool = {}
+    for r in rows:
+        if cs.intersection(r["categories"]):
+            p = pool.setdefault(r["request_id"], [0, 0])
+            p[0] += 1
+            p[1] += bool(r["accepted"])
+    return pool
+
+
+def _marginal_table(rows, key_fn, min_n, n_boot):
+    """Rate + prompt-grouped CI per key (domain / phase / category marginal)."""
+    from cas.analysis.atlas import bootstrap_rate_ci
+
+    cells = {}
+    for r in rows:
+        for key in key_fn(r):
+            c = cells.setdefault(key, {"n": 0, "k": 0, "prompts": {}})
+            c["n"] += 1
+            c["k"] += bool(r["accepted"])
+            p = c["prompts"].setdefault(r["request_id"], [0, 0])
+            p[0] += 1
+            p[1] += bool(r["accepted"])
+    out = []
+    for key, c in sorted(cells.items()):
+        if c["n"] < min_n:
+            continue
+        lo, hi = bootstrap_rate_ci(c["prompts"], n_boot=n_boot)
+        out.append({"key": key, "n": c["n"], "rate": c["k"] / c["n"],
+                    "ci_lo": lo, "ci_hi": hi, "n_prompts": len(c["prompts"])})
+    out.sort(key=lambda r: r["rate"])
+    return out
+
+
+def atlas_c04(run_dir, eval_split, data_dir="data", min_n=50, n_boot=1000):
+    """C04 acceptance atlas on ONE split, domain-controlled (I18 / C04).
+
+    Extends the T3.3 atlas with what the C04 claim needs (landscape §C04
+    positioning): (a) split filtering (the T3.3 atlas pooled dev+test); (b) the
+    domain-marginal control table (reproducing the domain-grain axis of prior
+    work, arXiv:2604.14682); (c) per-category tables WITHIN each domain, so
+    category heterogeneity is shown beyond domain identity; (d) the
+    pre-registered structural-vs-entity contrast (C04_HIGH vs C04_LOW pools)
+    overall and within every domain, with paired prompt-grouped bootstrap CIs.
+    Labels are counterfactual per-position `target_match` (unbiased across
+    positions). Every number is script-generated from sealed traces."""
+    from cas.analysis.atlas import atlas_table, bootstrap_delta_ci
+    from cas.annotate.categories import CATEGORY_SET_VERSION, annotate_categories
+    from cas.annotate.phases import PHASE_SET_VERSION, annotate_phase
+
+    tok = _load_tokenizer(run_dir)
+    tokens = _read_parquet(os.path.join(run_dir, LABEL_POLICY, "tokens.parquet"))
+    summaries = _read_parquet(
+        os.path.join(run_dir, LABEL_POLICY, "request_summaries.parquet"))
+    domain = {s["request_id"]: s["domain"] for s in summaries}
+    split = _split_by_request(run_dir, summaries, data_dir=data_dir)
+
+    cat_cache: dict[int, list[str]] = {}
+
+    def cats_for(tid):
+        c = cat_cache.get(tid)
+        if c is None:
+            piece = tok.convert_ids_to_tokens(int(tid))
+            c = sorted(annotate_categories(piece, token_id=int(tid)))
+            cat_cache[tid] = c
+        return c
+
+    rows = []
+    for t in tokens:
+        rid = t["request_id"]
+        if split.get(rid) != eval_split:
+            continue
+        rows.append({
+            "request_id": rid,
+            "domain": domain.get(rid, "unknown"),
+            "accepted": bool(t["target_match"]),
+            "categories": cats_for(t["draft_token_id"]),
+            "phase": annotate_phase(int(t["token_position"])),
+        })
+
+    def _contrast(sub_rows):
+        pa = _pool_prompts(sub_rows, C04_HIGH)
+        pb = _pool_prompts(sub_rows, C04_LOW)
+        na = sum(v[0] for v in pa.values())
+        nb = sum(v[0] for v in pb.values())
+        if na < min_n or nb < min_n:
+            return {"note": f"insufficient pool ({na} high / {nb} low)",
+                    "n_high": na, "n_low": nb}
+        d = bootstrap_delta_ci(pa, pb, n_boot=n_boot)
+        d.update({"n_high": na, "n_low": nb,
+                  "rate_high": sum(v[1] for v in pa.values()) / na,
+                  "rate_low": sum(v[1] for v in pb.values()) / nb})
+        return d
+
+    domains = sorted({r["domain"] for r in rows})
+    report = {
+        "run_dir": run_dir, "eval_split": eval_split, "data_dir": data_dir,
+        "policy": LABEL_POLICY, "acceptance_label": "target_match",
+        "category_set_version": CATEGORY_SET_VERSION,
+        "phase_set_version": PHASE_SET_VERSION,
+        "min_n": min_n, "n_boot": n_boot,
+        "n_tokens": len(rows),
+        "n_requests": len({r["request_id"] for r in rows}),
+        "contrast_pools": {"high": list(C04_HIGH), "low": list(C04_LOW)},
+        "domain_marginal": _marginal_table(
+            rows, lambda r: [r["domain"]], min_n, n_boot),
+        "phase_marginal": _marginal_table(
+            rows, lambda r: [r["phase"]], min_n, n_boot),
+        "category_marginal": _marginal_table(
+            rows, lambda r: r["categories"] or ["uncategorized"], min_n, n_boot),
+        "category_by_phase": atlas_table(rows, min_n=min_n, n_boot=n_boot),
+        "within_domain_category": {
+            d: _marginal_table([r for r in rows if r["domain"] == d],
+                               lambda r: r["categories"] or ["uncategorized"],
+                               min_n, n_boot)
+            for d in domains},
+        "contrast_overall": _contrast(rows),
+        "contrast_by_domain": {
+            d: _contrast([r for r in rows if r["domain"] == d])
+            for d in domains},
+    }
+    return report
 
 
 def run(run_dir, out_path=None, eval_split="dev"):

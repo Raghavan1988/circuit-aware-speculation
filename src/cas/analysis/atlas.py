@@ -79,6 +79,60 @@ def bootstrap_rate_ci(prompts: dict, n_boot: int = 1000, seed: int = 0,
     return (stats[lo_i], stats[hi_i])
 
 
+def bootstrap_delta_ci(prompts_a: dict, prompts_b: dict, n_boot: int = 1000,
+                       seed: int = 0, alpha: float = 0.05) -> dict:
+    """Paired prompt-grouped bootstrap for a rate CONTRAST rate_a - rate_b.
+
+    Resamples the UNION of prompt ids once per replicate and recomputes both
+    rates from the same resampled prompt multiset (a prompt absent from a pool
+    contributes nothing to that pool). Prompts are the exchangeable unit
+    (contract: prompt-grouped everything); the pairing makes the contrast CI
+    honest when the two pools share prompts, which category pools always do.
+
+    Args:
+        prompts_a / prompts_b: {prompt_id: [n_tokens, n_accepted]} per pool.
+    Returns:
+        {delta, lo, hi, p_delta_le_0, n_boot_effective}; delta is the full-pool
+        point estimate. Replicates where either pool lands empty are skipped
+        (counted out of n_boot_effective). Empty input pools -> zeros.
+    """
+    def _rate(prompts):
+        n = sum(v[0] for v in prompts.values())
+        k = sum(v[1] for v in prompts.values())
+        return (k / n) if n else 0.0
+
+    ids = sorted(set(prompts_a) | set(prompts_b))
+    if not ids or not prompts_a or not prompts_b:
+        return {"delta": 0.0, "lo": 0.0, "hi": 0.0, "p_delta_le_0": 1.0,
+                "n_boot_effective": 0}
+    point = _rate(prompts_a) - _rate(prompts_b)
+    rng = random.Random(seed)
+    deltas = []
+    for _ in range(n_boot):
+        na = ka = nb = kb = 0
+        for _ in ids:
+            pid = ids[rng.randrange(len(ids))]
+            if pid in prompts_a:
+                pn, pk = prompts_a[pid]
+                na += pn
+                ka += pk
+            if pid in prompts_b:
+                pn, pk = prompts_b[pid]
+                nb += pn
+                kb += pk
+        if na and nb:
+            deltas.append(ka / na - kb / nb)
+    if not deltas:
+        return {"delta": point, "lo": 0.0, "hi": 0.0, "p_delta_le_0": 1.0,
+                "n_boot_effective": 0}
+    deltas.sort()
+    lo_i = int((alpha / 2) * (len(deltas) - 1))
+    hi_i = int((1 - alpha / 2) * (len(deltas) - 1))
+    return {"delta": point, "lo": deltas[lo_i], "hi": deltas[hi_i],
+            "p_delta_le_0": sum(1 for d in deltas if d <= 0.0) / len(deltas),
+            "n_boot_effective": len(deltas)}
+
+
 def atlas_table(tokens, min_n: int = 50, n_boot: int = 1000,
                 seed: int = 0) -> list[dict]:
     """Flat atlas rows sorted by acceptance rate, each with a prompt-grouped

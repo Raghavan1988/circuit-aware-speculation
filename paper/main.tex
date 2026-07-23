@@ -445,8 +445,11 @@ velocities add only $+0.01$--$+0.04$ and are inconsistent across settings;
 only the full representation clears the bar in all three. A compact sufficient
 statistic is the main open engineering question. (iii) \emph{History-only
 control is weak}: the acceptance-history EMA is already in our baseline, and
-bandit-style history controllers converge to best-fixed behavior in our
-replays---context, not competition, for representation-level signals.
+stationary bandit controllers over length arms [arXiv:2505.15141] learn the
+best single arm and therefore tie the best fixed length by construction in our
+replays (serving-efficiency $2.4015$ vs.\ $2.4022$ for best-fixed, while the
+contextual entropy stop reaches $2.6715$)---context, not competition, for
+representation-level signals.
 
 \section{Limitations}
 \label{sec:limitations}

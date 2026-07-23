@@ -541,6 +541,65 @@ def t3(run_id: str = "sweep-2026-07-11T203836", eval_split: str = "dev"):
     analyze.remote(run_id, eval_split)
 
 
+@app.function(image=image, volumes=VOLUMES, timeout=2 * 3600,
+              secrets=[hf_secret])  # CPU-only; secret for gated tokenizers
+def c04_atlas_fn(run_id: str, eval_split: str = "dev", data_dir: str = "data",
+                 min_n: int = 50, n_boot: int = 1000) -> dict:
+    """C04 acceptance atlas on one split, domain-controlled (I18/C04).
+
+    Split-filtered category x phase atlas + domain-marginal control + within-
+    domain category tables + the pre-registered structural-vs-entity contrast
+    (scripts.run_t3_analysis.atlas_c04). Writes
+    /artifacts/analysis/<run>/c04_atlas_<split>.json. `data_dir` selects the
+    corpus split manifest ("data" v1, "data_v2" v2)."""
+    import json as _json
+
+    from scripts.run_t3_analysis import atlas_c04
+
+    rep = atlas_c04(f"/artifacts/traces/{run_id}", eval_split,
+                    data_dir=data_dir, min_n=min_n, n_boot=n_boot)
+    os.makedirs(f"/artifacts/analysis/{run_id}", exist_ok=True)
+    outp = f"/artifacts/analysis/{run_id}/c04_atlas_{eval_split}.json"
+    with open(outp, "w") as f:
+        _json.dump(rep, f, indent=2, sort_keys=True)
+    artifacts.commit()
+
+    print(f"run={run_id} split={eval_split} n_tokens={rep['n_tokens']} "
+          f"n_requests={rep['n_requests']}")
+    print("domain marginal:")
+    for r in rep["domain_marginal"]:
+        print(f"  {r['key']:<14} rate={r['rate']:.3f} "
+              f"[{r['ci_lo']:.3f},{r['ci_hi']:.3f}] n={r['n']}")
+    cm = rep["category_marginal"]
+    print("category marginal (lowest 3 / highest 3):")
+    for r in cm[:3] + cm[-3:]:
+        print(f"  {r['key']:<22} rate={r['rate']:.3f} "
+              f"[{r['ci_lo']:.3f},{r['ci_hi']:.3f}] n={r['n']}")
+    co = rep["contrast_overall"]
+    if "delta" in co:
+        print(f"contrast overall (high-low): delta={co['delta']:+.4f} "
+              f"[{co['lo']:+.4f},{co['hi']:+.4f}] p<=0={co['p_delta_le_0']:.4f}")
+    print("contrast by domain:")
+    for d, c in rep["contrast_by_domain"].items():
+        if "delta" in c:
+            print(f"  {d:<14} delta={c['delta']:+.4f} [{c['lo']:+.4f},"
+                  f"{c['hi']:+.4f}] p<=0={c['p_delta_le_0']:.4f} "
+                  f"(n {c['n_high']}/{c['n_low']})")
+        else:
+            print(f"  {d:<14} {c['note']}")
+    print(f"wrote {outp}")
+    return {"run": run_id, "eval_split": eval_split,
+            "contrast_overall": {k: co[k] for k in ("delta", "lo", "hi")
+                                 if k in co}}
+
+
+@app.local_entrypoint()
+def c04(run_id: str = "sweep-2026-07-11T203836", eval_split: str = "dev",
+        data_dir: str = "data"):
+    """C04 atlas: dev first (claim formulation), then the one-shot test pass."""
+    c04_atlas_fn.remote(run_id, eval_split, data_dir)
+
+
 @app.function(image=image, volumes=VOLUMES, timeout=1800)  # CPU-only
 def sensitivity(run_id: str) -> dict:
     """(a) Oracle-headroom cost-sensitivity: what the headroom becomes under a
