@@ -808,3 +808,48 @@ full-text). Full per-paper table + criterion matrix in `docs/landscape.md`
   not decisive for C10. One refuted claim recorded for transparency: AdaSpec does
   NOT articulate the pre-round gap (0-3) — never cite it as naming C10's gap.
 - Logged by Claude, 2026-07-22.
+
+### 2026-07-22 — C04 atlas dev pass (3 settings) + PRE-REGISTRATION for the frozen test pass
+
+Split-aware, domain-controlled atlas (`atlas_c04`, commit 80ee48b) on the DEV
+split of all three settings (Qwen-v1 149,872 tokens / Qwen-v2 207,256 / Llama
+123,904; labels = counterfactual per-position `target_match`; categories
+v1.0.0 overlapping, phases v1.0.0 absolute bins; prompt-grouped bootstrap
+CIs). Artifacts: `analysis/<run>/c04_atlas_dev.json`.
+
+**Dev findings.** (a) Domain marginals reproduce the domain-grain axis of
+arXiv:2604.14682 (control achieved; e.g. v1 summ 0.657 < chat 0.700 < code
+0.813 < math 0.875). (b) The pre-specified structural-vs-entity contrast
+(HIGH = code_delimiter/operator/number pooled vs LOW =
+named_entity/reasoning_transition pooled) is positive and CI-clean OVERALL in
+all three settings (+0.190 / +0.219 / +0.089) and WITHIN 14 of 15 domain
+cells (all 4 v1, all 7 v2, Llama chat/math/summ); the one null is Llama-code
+(−0.006 [−0.063, +0.037], base acceptance 0.913 — ceiling). (c) The category
+ordering's tails are cross-family stable (high: code_delimiter/operator/
+number/clause_boundary/punctuation; named_entity below the marginal in all
+three); reasoning_transition is low on Qwen only. (d) **Phase axis is
+null-to-inconsistent:** flat on both Qwen settings (max−min ≤ 0.015,
+overlapping CIs); monotone increasing on Llama only (0.788→0.827→0.849) — no
+cross-family phase structure. (e) Descriptive anomaly, not a claim: Llama
+`special` accepts at 0.007 (n=883) — likely chat-template/special-token
+handling divergence between the pairs; investigate separately.
+
+**PRE-REGISTERED test criteria (fixed before unblinding test; evaluated
+per-setting by script over `c04_atlas_test.json`):**
+- **T1 (overall contrast):** HIGH−LOW contrast positive, p(Δ≤0)<0.05, all 3
+  settings.
+- **T2 (beyond domain):** within-domain contrast positive + CI-clean in all 4
+  Qwen-v1 domains, all 7 Qwen-v2 domains, and Llama chat/math/summ.
+  **Llama-code pre-registered as expected-null:** pass requires its test CI to
+  include 0 or sit positive (no significant negative reversal).
+- **T3 (tail stability):** in each setting, each HIGH category's test rate ≥
+  the setting's overall test marginal; named_entity's ≤ the marginal.
+- **T4 (phase, expected null):** on both Qwen settings, phase spread
+  (max−min) ≤ 0.03; no cross-family phase claim regardless of outcome (the
+  Llama monotone trend is recorded descriptively; potential length/mix
+  confound).
+- **Outcome mapping:** T1–T3 pass 3/3 → C04 → SUPPORTED for the CATEGORY axis,
+  scope-limited (phase axis null/inconsistent; Llama-code ceiling exclusion;
+  overlapping labels v1.0.0; fixed_8 counterfactual labels; 2 families, 2
+  corpora). Any failure → PARTIAL with the specific failing cells recorded.
+- Logged by Claude, 2026-07-22 (before the test unblinding).

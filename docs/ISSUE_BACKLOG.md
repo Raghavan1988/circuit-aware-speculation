@@ -23,7 +23,7 @@ Statuses are `OPEN`, `IN_PROGRESS`, `BLOCKED`, and `DONE`. Before starting, add 
 | I15 | IN_PROGRESS | Claude | Run rejection-direction interventions and controls | I12 | I14 | A100/H100 |
 | I16 | OPEN | — | Run domain- and traffic-shift experiments | I14 | I15,I17 | A100/H100 |
 | I17 | OPEN | — | Add and validate the replication model pair | I03,I04,I06 | I15,I16 | A100/H100 |
-| I18 | OPEN | — | Generate acceptance atlas and primary figures | I11,I13,I14,I15,I16,I17 | — | CPU |
+| I18 | IN_PROGRESS | Claude | Generate acceptance atlas and primary figures | I11,I13,I14,I15,I16,I17 | — | CPU |
 | I19 | IN_PROGRESS | Claude | Assemble anonymous artifact-driven journal manuscript | I18 | — | CPU |
 | I20 | OPEN | — | Run clean reproduction and evidence audit | I19 | — | GPU/CPU |
 | I21 | DONE | Grok | Verify landscape additions; maintain living comparison table | — | I01,I05 | CPU |
