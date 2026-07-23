@@ -24,7 +24,7 @@ Statuses are `OPEN`, `IN_PROGRESS`, `BLOCKED`, and `DONE`. Before starting, add 
 | I16 | OPEN | — | Run domain- and traffic-shift experiments | I14 | I15,I17 | A100/H100 |
 | I17 | OPEN | — | Add and validate the replication model pair | I03,I04,I06 | I15,I16 | A100/H100 |
 | I18 | OPEN | — | Generate acceptance atlas and primary figures | I11,I13,I14,I15,I16,I17 | — | CPU |
-| I19 | OPEN | — | Assemble anonymous artifact-driven journal manuscript | I18 | — | CPU |
+| I19 | IN_PROGRESS | Claude | Assemble anonymous artifact-driven journal manuscript | I18 | — | CPU |
 | I20 | OPEN | — | Run clean reproduction and evidence audit | I19 | — | GPU/CPU |
 | I21 | DONE | Grok | Verify landscape additions; maintain living comparison table | — | I01,I05 | CPU |
 | I22 | OPEN | — | Reproduce SpecDec++-style learned acceptance-head baseline | I03,I06,I10 | I08,I09 | GPU |
@@ -152,6 +152,12 @@ D025; `docs/autoresearch_outcomes.md`, `docs/causal_intervention_report.md`).
   pre-existing v2 test artifact (earlier unrecorded unblinding) is disclosed in
   the ledger; conclusion unchanged. I13 stays IN_PROGRESS (calibration reporting
   + manuscript-facing figures remain).
+- **I19 manuscript draft started (2026-07-22, Claude):** `paper/main.tex`
+  (anonymous, compiles standalone; arXiv-ID-only citations pending full bib).
+  Every number transcribed from the ledger's script-generated artifacts;
+  G2-gated language (representation/diagnostic signal) per D020. Remaining for
+  I19: figures (I18), full bibliography, citing-sweep refresh at freeze, owner
+  G2 language decision, then G5 audit (I20).
 
 ## Acceptance criteria and artifacts
 

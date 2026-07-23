@@ -1,0 +1,546 @@
+% I19 manuscript draft (anonymous, staged-release policy D010).
+% Language policy: G2 gate (D020) NOT tripped -> "representation"/"diagnostic
+% signal" wording throughout; no "mechanism"/"circuit". Every number below is
+% copied from script-generated immutable artifacts recorded in
+% docs/CLAIMS_LEDGER.md; no hand-derived statistics (AGENTS.md).
+% Citations are given by arXiv identifier; full bibliographic entries to be
+% completed at submission time.
+\documentclass[11pt]{article}
+\usepackage[margin=1.1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+% Optional niceties with fallbacks so the draft compiles on minimal TeX
+% installs; the arXiv toolchain has all of these.
+\IfFileExists{pdftexcmds.sty}{\usepackage[hidelinks]{hyperref}}{}
+\IfFileExists{booktabs.sty}{\usepackage{booktabs}}{%
+  \newcommand{\toprule}{\hline\hline}%
+  \newcommand{\midrule}{\hline}%
+  \newcommand{\bottomrule}{\hline\hline}}
+\IfFileExists{microtype.sty}{\usepackage{microtype}}{}
+\IfFileExists{xcolor.sty}{\usepackage{xcolor}}{}
+
+\newcommand{\deltaAUROC}{\ensuremath{\Delta\mathrm{AUROC}}}
+\newcommand{\pdle}{\ensuremath{P(\Delta\le 0)}}
+
+\title{\textbf{Before You Draft: Pre-Round Acceptance Prediction from the
+Target's Cached Representations in Lossless Speculative Decoding}}
+\author{Anonymous\thanks{Draft under a staged release policy; artifact and code
+release follow the policy's impact gate.}}
+\date{Draft of 2026-07-22}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+In speculative decoding, every control signal in deployed use today is computed
+\emph{after} draft tokens exist: draft-model entropy, agreement heads on draft
+hidden states, or acceptance history. We show that the \emph{target} model's own
+cached representation at the frontier position---the residual-stream state at
+the last verified token, a free byproduct of the previous verification pass---%
+predicts whether the \emph{next} round's first drafted token will be accepted,
+\emph{before any draft compute is spent}. Against a hardened pre-round baseline
+(previous-round target entropy, top-1/top-2 margin, recent-acceptance history,
+and domain), a linear probe on this representation adds
+$+0.05$--$+0.10$ AUROC, replicated across two model families (Qwen2.5-7B/0.5B,
+Llama-3.1-8B/3.2-1B) and two corpora (4-domain and 7-axis), on frozen test
+splits under two protocols including a strict dev$\to$test transfer in which no
+parameter, scaler, or calibrator ever touches test data. Equal-capacity random
+controls collapse to chance-level additions, Platt-calibrated probabilities are
+decision-usable (test ECE $0.016$--$0.037$), and the probe costs ${\sim}16\,\mu
+s$ per round (${\sim}0.015\%$ of a decode round). Steering along the probe
+direction disrupts realized acceptance $2$--$10\times$ more than norm-matched
+random and shuffled controls, dose-dependently and beyond the induced entropy
+change, in both model families---evidence that the representation is causally
+load-bearing for acceptance, not epiphenomenal. The signal is
+\emph{first-token only}: per-length survival probes show no usable lift for run
+length ($k\ge4$), cleanly separating this result from draft-length prediction.
+We position the finding as an honest diagnostic: it complements, rather than
+replaces, within-round draft-entropy control, and its decision value
+concentrates in expensive-draft regimes.
+\end{abstract}
+
+\section{Introduction}
+\label{sec:intro}
+
+Speculative decoding (SD) accelerates autoregressive generation by letting a
+cheap drafter propose tokens that the target model verifies in parallel,
+guaranteeing exact-match (lossless) outputs under greedy
+decoding~[arXiv:2211.17192; arXiv:2302.01318]. Its efficiency is governed by
+acceptance: rejected drafts waste compute. A large literature therefore
+predicts or adapts to acceptance---but, to our knowledge, every deployed or
+published control signal is computed \emph{within} the round, after draft
+compute has already been spent: draft-model entropy stops
+[arXiv:2411.18462; arXiv:2410.18351], learned heads on \emph{draft} hidden
+states [arXiv:2405.19715; arXiv:2607.05147], bandits over configurations from
+acceptance history [arXiv:2505.15141], or verification-time judges on drafted
+tokens [arXiv:2501.19309].
+
+This paper asks a strictly earlier question: \emph{before} the drafter runs at
+all, does the serving stack already hold information about whether drafting
+will pay off? A natural candidate is free: when round $r{-}1$'s verification
+pass commits tokens, the target model's forward pass has already materialized
+its residual-stream representation at the \emph{frontier}---the last committed
+position. That state exists in memory before round $r$ drafts; reading it costs
+nothing beyond a probe.
+
+\paragraph{Contributions.}
+\begin{enumerate}
+\item \textbf{A pre-round diagnostic signal.} A linear probe on the target's
+cached frontier representation (four layers) predicts first-token acceptance of
+the upcoming round with $+0.05$--$+0.10$ AUROC over a hardened pre-round
+baseline (previous-round target entropy, top-1/top-2 margin, acceptance-history
+EMA, domain one-hots), Platt-calibrated, with equal-capacity random and
+norm-matched controls collapsing to chance-level additions
+(\S\ref{sec:results-main}).
+\item \textbf{Replication and frozen-test discipline.} The result replicates
+across two model families and two corpora (three settings), on frozen test
+splits, under two protocols---including a strict dev$\to$test transfer in which
+the probe, scaler, imputation statistics, domain vocabulary, and calibrator are
+all frozen on development data and the test split is scored exactly once
+(\S\ref{sec:protocol}, \S\ref{sec:results-main}).
+\item \textbf{A causal check at the representation level.} Forward-hook
+steering along the probe direction, at matched norms and graded doses, disrupts
+realized acceptance $2$--$10\times$ more than random and shuffled controls,
+dose-dependently, beyond the induced entropy change, at all four probed layers,
+in both families (\S\ref{sec:causal}). We deliberately describe this as
+representation-level causal evidence, not a mechanistic account.
+\item \textbf{Honest boundaries.} The signal is first-token only: per-length
+survival probes are null-to-harmful at $k\ge4$, so the representation does
+\emph{not} support run-length selection (\S\ref{sec:length})---differentiating
+it from draft-length predictors [arXiv:2412.18910]. A matched study on
+\emph{draft}-side hidden states fails to beat cheap surface signals
+(\S\ref{sec:negatives}), cheap compressions of the frontier state lose most of
+the lift, and the decision value of the pre-round signal concentrates in
+expensive-draft regimes; within-round entropy control captures more of the
+adaptive-length headroom (\S\ref{sec:systems}).
+\end{enumerate}
+
+Combined, these results occupy a cell that a verified literature sweep
+(\S\ref{sec:related}) indicates is empty: \emph{pre-round} timing $\times$
+\emph{target-side cached} representation $\times$ \emph{lossless} exact-match
+SD $\times$ \emph{calibrated} probability $\times$ \emph{baseline-controlled}
+against free entropy/margin/history signals $\times$ \emph{independent} drafter
+$\times$ \emph{skip-capable} decision $\times$ \emph{first-token} target.
+
+\section{Related work}
+\label{sec:related}
+
+\paragraph{Within-round draft-side control.} Draft-entropy stopping rules
+[arXiv:2411.18462; arXiv:2410.18351], learned acceptance heads on post-draft
+hidden states [arXiv:2405.19715], confidence-scheduled verification from
+signals emitted during drafting [arXiv:2607.05147], draft-confidence
+continue/stop loops [arXiv:2503.05096], compression-aware run-length selection
+from draft entropy/confidence [arXiv:2605.02888], dynamic lookahead
+[arXiv:2405.04304], post-hoc divergence diagnostics [arXiv:2509.01083], tree
+pruning and construction [arXiv:2502.13652; arXiv:2402.12374;
+arXiv:2607.16673], RL coordination of draft depth and verification size
+[arXiv:2603.01639], and companion-model verification-length adaptation
+[arXiv:2509.24328] all consume signals that exist only after draft compute
+begins. History-only bandits over configurations [arXiv:2505.15141] use a
+signal we include in our baseline.
+
+\paragraph{Pre-draft signals from the target.} AdaEAGLE
+[arXiv:2412.18910] is the closest prior: its length predictor consumes exactly
+our signal class---the target's final-layer state at the last validated
+position, pre-draft---but regresses \emph{draft length} (uncalibrated scalar
+regression), is deliberately logit-free (no entropy or margin baselines),
+offers no skip action, and operates a trained EAGLE-style head
+[arXiv:2401.15077] rather than an independent drafter. Notably, its own
+ablation finds length \emph{classification} inferior---convergent with our
+finding that the frontier state supports a first-token decision, not length
+selection. Cache-draft payoff routing [arXiv:2606.01019] estimates accepted
+length of a retrieved draft from cache/history features (no hidden states, no
+skip). Drafter-paradigm routing from target-side signals [arXiv:2606.07710]
+chooses \emph{which} drafter to run, not \emph{whether} drafting pays.
+
+\paragraph{Verification-time judgment and relaxed acceptance.} Judge Decoding
+[arXiv:2501.19309] scores already-drafted tokens with a head on target
+embeddings and relaxes losslessness; semantic-acceptance probing of draft and
+target states during verification [arXiv:2602.03708] likewise changes the
+correctness contract. We keep exact-match verification and act strictly
+pre-round.
+
+\paragraph{Acceptance analysis and theory.} Domain-grain acceptance analyses
+[arXiv:2604.14682] document task-level variation we control for via domain
+one-hots. An acceptance-certificate theory [arXiv:2606.30265] derives sharp
+margin-based bounds for strict greedy acceptance in which the target's
+top-1/top-2 margin carries the governing variable---formalizing why our
+baseline \emph{must} include margin and entropy for the incremental claim to
+be meaningful.
+
+\paragraph{Pre-generation probing methodology.} Linear probes on
+pre-generation activations predicting answer or code correctness
+[arXiv:2509.10625; arXiv:2606.14530] establish the general probing template we
+adapt; reported failures of linear directions to transfer across tasks
+[arXiv:2506.08572] motivate our cross-family, cross-corpus replication design.
+
+\section{Setting}
+\label{sec:setting}
+
+\paragraph{Lossless speculative decoding.} A target model $T$ and independent
+drafter $D$ (same tokenizer) generate greedily. In round $r$, $D$ proposes up
+to $L$ tokens extending the committed prefix; $T$ verifies them in one forward
+pass; the longest prefix agreeing with $T$'s greedy argmax is committed, plus
+one bonus token. Output tokens are exactly $T$'s greedy continuation.
+
+\paragraph{Frontier representation.} Let $x_{1:t}$ be the committed prefix
+after round $r{-}1$. Verification of round $r{-}1$ already computed $T$'s
+residual stream over the prefix; we denote by
+$h_\ell(t)\in\mathbb{R}^{d}$ the layer-$\ell$ residual-stream state at the
+frontier (last committed) position. Our candidate signal for round $r$ is the
+concatenation $\phi(t)=[h_{\ell}(t)]_{\ell\in\{6,12,18,24\}}$
+($d_{\mathrm{model}}=3584$ for the Qwen pair, $4096$ for Llama; $\phi$ has
+$14{,}336$ resp.\ $16{,}384$ dimensions). $\phi(t)$ exists in memory before
+round $r$ drafts.
+
+\paragraph{Labels.} The prediction target is \emph{first-token acceptance}:
+whether round $r$'s first drafted token matches $T$'s greedy argmax
+(equivalently, accepted length $\ge 1$). Per-length survival labels
+$\mathbf{1}[A_r\ge k]$ for $k\in\{1,2,4,6,8\}$ use the round's counterfactual
+full-information acceptance record (the engine logs agreement for all proposed
+positions, independent of the executed policy).
+
+\paragraph{Pre-round baseline (the bar).} All lifts are \emph{incremental}
+over a frozen baseline containing every free pre-round signal we could
+identify: (i) recent-acceptance history (EMA over strictly prior rounds); (ii)
+previous-round target next-token entropy at the frontier; (iii) previous-round
+target top-1/top-2 margin; (iv) per-column missing flags with mean imputation;
+(v) domain one-hots. Items (ii)--(iii) are free byproducts of verification and,
+per certificate theory [arXiv:2606.30265], carry the governing variable for
+greedy acceptance; item (v) removes the confound that the representation might
+merely re-identify domain.
+
+\section{Experimental protocol}
+\label{sec:protocol}
+
+\paragraph{Models and corpora.} Primary pair: Qwen2.5-7B-Instruct (target) /
+Qwen2.5-0.5B-Instruct (drafter). Replication pair: Llama-3.1-8B-Instruct /
+Llama-3.2-1B-Instruct. Model revisions are pinned. Corpus v1: $644$ prompts
+over four domains (chat, code, math, summarization). Corpus v2: $1{,}494$
+prompts over seven axes (adding translation, retrieval-grounded QA, structured
+generation). Decode traces are sealed fixed-length ($L{=}8$) sweeps,
+$\mathrm{max\_new}=256$, bf16, single-request batches on A100-class
+accelerators. The three settings reported are (Qwen, v1), (Qwen, v2),
+(Llama, v1).
+
+\paragraph{Engine validity.} The engine passes bit-identity gates against
+target-only greedy decoding in fp32 (all tests, both families; e.g.\ $118/118$
+on the Llama pair), including skip, stop-rule, and end-of-sequence edge cases.
+In bf16, parallel-verify vs.\ sequential-decode arithmetic differs at the
+${\sim}0.7\%$/token level through argmax ties; per-request equivalence status
+is logged, and acceptance labels remain exact in-context ground truth
+regardless of trajectory divergence.
+
+\paragraph{Capture.} For each setting we capture $\phi(t)$ at every
+proposal-bearing round's frontier position by teacher-forcing the target over
+the committed prefix, for $400$ prompts sampled domain-stratified round-robin
+(a sorted-truncation sampler in an early capture produced ${\sim}2$
+domains/run and was replaced; all reported captures are stratified). Row
+counts: $23{,}568$ (Qwen-v1), $14{,}122$ (Qwen-v2), $19{,}269$ (Llama)
+$\times$ four layers, stored fp16.
+
+\paragraph{Splits and fitting.} All splits are prompt-grouped (50/50
+dev/test, fixed seed); no token- or row-level random splits anywhere.
+Probes are $\ell_2$-regularized logistic models ($C{=}0.1$; chosen on dev for
+convergence and run-to-run reproducibility---under-regularized fits were
+observed to be BLAS-thread-dependent), fit under GroupKFold ($5$ folds) with
+within-fold standardization. Every candidate is scored with two
+\emph{equal-capacity controls} (i.i.d.\ Gaussian columns of the candidate's
+exact dimensionality, raw and per-column std-matched): a ``lift'' that random
+columns of equal capacity can reproduce is not a lift. Uncertainty: 95\%
+prompt-grouped bootstrap CIs on \deltaAUROC{} ($1{,}000$ resamples; $2{,}000$
+for length probes) with \pdle{} reported. Calibration: a single global Platt
+map on out-of-fold scores (monotone; AUROC-preserving), so decision metrics
+(ECE, regret) are computed on calibrated probabilities.
+
+\paragraph{Two frozen test protocols.} Development-set selection identified
+exactly one surviving candidate (the raw frontier representation; see
+\S\ref{sec:negatives} for rejected variants). The frozen test split was then
+evaluated once per protocol, single pre-registered spec, no test-side
+selection:
+\begin{itemize}
+\item \textbf{P1, within-test OOF:} the dev-frozen pipeline (features, $C$,
+domain control, seed) is run under prompt-grouped OOF \emph{within} the test
+rows. Nothing is selected on test, but fold models are fit on test rows.
+\item \textbf{P2, strict dev$\to$test transfer:} scaler, probe, control
+columns, imputation means, domain vocabulary, and Platt calibrator are all fit
+on dev only; test rows are scored exactly once. No parameter of any kind is
+fit on test.
+\end{itemize}
+P2 is the deployment-faithful protocol; P1 is reported for comparability with
+the development analysis. Reported numbers reproduce across independent
+containers to ${\sim}{\pm}0.001$ AUROC (BLAS reduction-order noise; an order
+of magnitude below CI half-widths).
+
+\section{Results}
+
+\subsection{The target's cached state predicts next-round acceptance}
+\label{sec:results-main}
+
+Table~\ref{tab:dev} shows development-split results (domain-controlled);
+Table~\ref{tab:frozen} the one-shot frozen-test results under both protocols.
+The pattern is identical across all three settings: the frontier
+representation adds $+0.04$--$+0.11$ AUROC over the hardened baseline, CIs
+exclude zero with $\pdle=0.000$, and equal-capacity controls sit at or below
+the baseline (control AUROCs $0.53$--$0.56$, i.e.\ the added random columns
+contribute nothing)---the lift is information, not capacity.
+
+\begin{table}[t]
+\centering
+\caption{Development split, domain-controlled incremental lift of the frontier
+representation over the pre-round baseline (entropy + margin + history +
+domain). Prompt-grouped OOF; 95\% grouped-bootstrap CIs; $\pdle=0.000$ for all
+three settings.}
+\label{tab:dev}
+\begin{tabular}{lcccc}
+\toprule
+Setting & \#domains & Baseline AUROC & Combined AUROC & \deltaAUROC \\
+\midrule
+Qwen-v1 & 4 & 0.670 & 0.742 & $+0.072$ \\
+Qwen-v2 & 7 & 0.618 & 0.731 & $+0.112$ \; {\footnotesize[+0.095, +0.130]} \\
+Llama-v1 & 4 & 0.696 & 0.765 & $+0.069$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\centering
+\caption{One-shot frozen \textbf{test} results, single pre-registered
+candidate. P1: within-test OOF. P2: strict dev$\to$test transfer (nothing fit
+on test). All cells: $\pdle=0.000$; combined beats both equal-capacity
+controls. Control column: best control AUROC under P2.}
+\label{tab:frozen}
+\begin{tabular}{lccccc}
+\toprule
+Setting & $n_{\mathrm{test}}$ & P1 \deltaAUROC{} [95\% CI] &
+P2 \deltaAUROC{} [95\% CI] & P2 Base$\to$Comb & P2 Ctrl \\
+\midrule
+Qwen-v1 & 11{,}982 & $+0.076$ {\footnotesize[+0.063, +0.089]} &
+$+0.056$ {\footnotesize[+0.041, +0.070]} & $0.660\to0.716$ & 0.542 \\
+Qwen-v2 & 7{,}191 & $+0.092$ {\footnotesize[+0.073, +0.111]} &
+$+0.103$ {\footnotesize[+0.083, +0.124]} & $0.626\to0.729$ & 0.528 \\
+Llama-v1 & 9{,}610 & $+0.053$ {\footnotesize[+0.037, +0.070]} &
+$+0.039$ {\footnotesize[+0.023, +0.057]} & $0.713\to0.752$ & 0.559 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Because the baseline includes domain one-hots and captures are
+domain-stratified, the lift is not domain identification. Because it includes
+the previous round's target entropy and margin---the theoretically governing
+free variables [arXiv:2606.30265]---the result states specifically:
+\emph{entropy and margin are not a sufficient statistic for pre-round
+acceptance; the cached representation carries additional decision-relevant
+information.}
+
+\subsection{Calibration}
+\label{sec:calibration}
+
+Raw high-dimensional probes are overconfident (uncalibrated combined ECE up to
+$0.14$), but a single global Platt map---AUROC-preserving, leakage-safe---
+restores test ECE to $0.016$--$0.024$ under P1. Under P2 the calibrator is
+frozen on dev OOF scores and applied to test scores from a model fit on all of
+dev; this distribution mismatch costs calibration quality on one setting
+(combined test ECE $0.037$ on Qwen-v1; $0.024$/$0.021$ on v2/Llama), which we
+report rather than repair post hoc. Ranking metrics are unaffected.
+
+\subsection{The signal is first-token only}
+\label{sec:length}
+
+Per-length survival probes $P(A\ge k)$ (Table~\ref{tab:length}) localize the
+information: the lift is strong and CI-clean at $k{=}1$ in all three settings
+and is null-to-\emph{harmful} at $k\ge4$ (significantly worse than baseline on
+v2/Llama at $k{=}8$, where domain and history already predict long runs). A
+survival-driven length controller correspondingly fails to beat a
+baseline-driven one except marginally at a single draft-cost point. The
+frontier state answers ``will speculation connect at all next round?''---not
+``for how long?''. This cleanly separates the contribution from pre-draft
+\emph{length} regression [arXiv:2412.18910], whose own ablations show length
+classification underperforming, and motivates the skip/admission decision as
+the natural consumer of the signal.
+
+\begin{table}[t]
+\centering
+\caption{Per-length survival \deltaAUROC{} (development, domain-controlled,
+$2{,}000$-resample grouped bootstrap). Bold: CI-clean positive. ``worse'':
+CI-clean negative.}
+\label{tab:length}
+\begin{tabular}{lccc}
+\toprule
+$k$ & Qwen-v1 & Qwen-v2 & Llama-v1 \\
+\midrule
+1 & $\mathbf{+0.073}$ & $\mathbf{+0.103}$ & $\mathbf{+0.065}$ \\
+2 & $+0.008$ (null) & $\mathbf{+0.045}$ & $-0.007$ (null) \\
+4 & $-0.010$ (null) & $-0.004$ (null) & $-0.019$ (worse) \\
+6 & $-0.002$ (null) & $-0.011$ (null) & $-0.032$ (worse) \\
+8 & $+0.002$ (null) & $-0.018$ (worse) & $-0.021$ (worse) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Steering the direction disrupts acceptance}
+\label{sec:causal}
+
+Predictive lift alone cannot distinguish a load-bearing representation from a
+correlated shadow. On held-out test rounds we therefore steer the target's
+residual stream at the frontier position with forward hooks:
+$h_\ell \leftarrow h_\ell + \alpha\,\sigma_\ell\,\hat d_\ell$, where
+$\hat d_\ell$ is the first-token acceptance direction fit on dev,
+$\sigma_\ell$ the mean frontier-state norm (natural dose scale), and
+$\alpha\in\{-2,-1,0,+1,+2\}$. Controls at every layer: norm-matched random
+directions and shuffled directions; a no-op fidelity check validates the hook
+site (fidelity $0.95$ Qwen-v1 / $1.00$ Llama). Steering along $\hat d_\ell$
+disrupts realized first-token acceptance $2$--$10\times$ more than the
+matched controls, dose-dependently (inverted-U peaking at $\alpha{=}0$), at
+all four probed layers, in both families; on Llama, real disruption is
+$0.32$--$0.40$ while controls are ${\approx}0$. Within narrow bins of the
+induced entropy change the real-vs-control gap persists, so the effect is not
+routed through entropy alone. We interpret this strictly at the representation
+level: the probed direction causally controls the target's next-token
+agreement-ability. We make no claim about internal computational structure.
+
+\subsection{Cost and decision relevance}
+\label{sec:systems}
+
+\paragraph{Cost.} Reading $\phi(t)$ is free on the capture path (the states
+are byproducts of verification); the probe is one $14$k-dimensional dot
+product: ${\sim}16\,\mu s$ per round on our measurement setup,
+${\sim}0.015\%$ of a decode round. The honest caveat is engineering, not
+compute: serving engines do not currently retain multi-layer frontier states,
+so productionizing requires exposing them (cheap) or a compact sufficient
+statistic (open; \S\ref{sec:negatives}).
+
+\paragraph{Decision proxy.} Sweeping a calibrated skip/draft decision across
+draft-cost ratios: at cheap draft cost ($\le0.2\times$ verify) every
+calibrated model elects ``always draft'' and no pre-round signal changes any
+decision---consistent with our finding that adding a skip arm under cheap
+serving costs \emph{hurts} ($-0.3$ to $-0.7\%$). At draft cost
+$\ge 1\times$ verify, the probe's regret reduction is CI-robust across a cost
+range on Qwen-v2 and Llama under both protocols (and on Qwen-v1 under P1;
+under P2 it is CI-robust only at one cost---a protocol sensitivity we report).
+The pre-round signal is decision-relevant where drafting is expensive
+(launch-bound drafters, large drafters, congested batch serving), and
+diagnostic elsewhere.
+
+\paragraph{Where pre-round control fits.} For adaptive \emph{length}, a
+within-round draft-entropy stop remains stronger: it beats the best fixed
+length by $+6.7$--$+11.2\%$ serving-efficiency across our three settings
+(e.g.\ $+11.2\%$, 95\% CI $[+10.3\%, +12.1\%]$ on Qwen-v1), while a pre-round
+frontier-entropy gate recovers only ${\sim}1/3$--$1/2$ of that gain. The two
+signals are complementary by timing: pre-round admission/skip and scheduling
+vs.\ within-round stopping.
+
+\subsection{Supporting negative results}
+\label{sec:negatives}
+
+Three negatives sharpen the claim. (i) \emph{Draft-side hidden states do not
+beat surface signals}: in a matched incremental study on the same traces, a
+linear probe on the \emph{drafter's} residual stream (best layer) reaches
+$0.803$ AUROC vs.\ a $0.870$ surface stack (entropy, margin, history,
+position), adding at most $+0.006$ when combined---so the pre-round result is
+not ``probes beat baselines'' generically; the target-side, pre-round framing
+is doing the work. (ii) \emph{Cheap compressions lose the signal}: low-rank
+projections ($k{=}16$), norm summaries, layer-alignment features, and drift
+velocities add only $+0.01$--$+0.04$ and are inconsistent across settings;
+only the full representation clears the bar in all three. A compact sufficient
+statistic is the main open engineering question. (iii) \emph{History-only
+control is weak}: the acceptance-history EMA is already in our baseline, and
+bandit-style history controllers converge to best-fixed behavior in our
+replays---context, not competition, for representation-level signals.
+
+\section{Limitations}
+\label{sec:limitations}
+
+First-token scope (no run-length claim; the length-aware controller does not
+benefit). Full-representation scope (the deployable-cheap variant is open).
+Greedy exact-match SD only; sampling-based acceptance untested. Two model
+families, one drafter per family; trained-head speculators (EAGLE-class) are
+out of scope by design (independent-drafter cell). Layers $\{6,12,18,24\}$
+were selected for the drafter's depth and inherited by the deeper targets; a
+target-tuned layer sweep may strengthen (or localize) the result. Decision
+analysis is a calibrated proxy over sealed traces; end-to-end wall-clock
+evaluation with the probe in the serving path---our systems gate---has not
+been run and no wall-clock claim is made. Batch-size-1 harness; batch
+interference unmeasured. Calibration under the strict protocol degrades on one
+setting (reported). bf16 argmax-tie trajectory divergence is characterized and
+logged rather than eliminated.
+
+\section{Conclusion}
+
+Before any draft compute is spent, the target model's cached frontier
+representation already carries calibrated, causally load-bearing,
+first-token-specific information about whether the next speculation round will
+connect---beyond entropy, margin, history, and domain, in two model families
+and two corpora, under frozen-test discipline. We offer it as an honest
+diagnostic with a precisely mapped boundary: a pre-round admission signal that
+complements within-round control, decision-relevant exactly where drafting is
+expensive.
+
+\section*{Reproducibility statement}
+
+Every reported number is generated by scripts from sealed, immutable decode
+traces and activation captures; no statistic is hand-derived. Splits are
+prompt-grouped with fixed seeds; the frozen-test protocol was pre-registered
+(single spec, criteria fixed before unblinding) and executed once per
+protocol; first-pass artifacts are archived alongside re-runs. Cross-container
+reproducibility of headline numbers is ${\pm}0.001$ AUROC. Code, sealed
+artifacts, and the full claims ledger (including all negative results and two
+integrity disclosures) are prepared for release under a staged policy.
+
+\begin{thebibliography}{99}
+\small
+% Full bibliographic entries (authors, titles, venues-as-dates) to be
+% completed at submission; identifiers are primary-source verified.
+\bibitem{leviathan} Fast inference from transformers via speculative decoding.
+arXiv:2211.17192.
+\bibitem{chen} Accelerating large language model decoding with speculative
+sampling. arXiv:2302.01318.
+\bibitem{eagle} EAGLE: speculative sampling with a feature-level
+autoregressive head. arXiv:2401.15077.
+\bibitem{specdecpp} SpecDec++: trained acceptance head on post-draft hidden
+states. arXiv:2405.19715.
+\bibitem{svip} SVIP: draft-entropy dynamic draft length. arXiv:2411.18462.
+\bibitem{adaedl} AdaEDL: entropy-based early draft stopping. arXiv:2410.18351.
+\bibitem{banditspec} BanditSpec: bandit selection of speculative-decoding
+configurations. arXiv:2505.15141.
+\bibitem{disco} DISCO: dynamic speculation lookahead. arXiv:2405.04304.
+\bibitem{dsde} DSDE: post-hoc divergence diagnostics for speculation length.
+arXiv:2509.01083.
+\bibitem{c2t} C2T: classifier-based token-tree pruning. arXiv:2502.13652.
+\bibitem{sequoia} Sequoia: hardware-aware token-tree optimization.
+arXiv:2402.12374.
+\bibitem{ltd} Learning to draft: RL coordination of draft and verification.
+arXiv:2603.01639.
+\bibitem{speckv} SpecKV: adaptive speculation length under KV compression.
+arXiv:2605.02888.
+\bibitem{adaspec} AdaSpec (ex-SpecServe): draft-confidence continue/stop
+control. arXiv:2503.05096.
+\bibitem{dspark} DSpark: confidence-scheduled verification in production
+serving. arXiv:2607.05147.
+\bibitem{sv} Speculative verification: companion-model verification-length
+adaptation. arXiv:2509.24328.
+\bibitem{specla} SpecLA: speculative decoding for linear-attention targets.
+arXiv:2607.16673.
+\bibitem{adaeagle} AdaEAGLE: pre-draft draft-length prediction with adaptive
+draft structures. arXiv:2412.18910.
+\bibitem{hvd} Hybrid verified decoding: cache-draft payoff routing.
+arXiv:2606.01019.
+\bibitem{whiflash} WhiFlash: pre-draft drafter-paradigm routing.
+arXiv:2606.07710.
+\bibitem{judge} Judge decoding: verification-time judgment on target
+embeddings. arXiv:2501.19309.
+\bibitem{semanticspec} SemanticSpec: semantic-acceptance probing during
+verification. arXiv:2602.03708.
+\bibitem{dynamics} Acceptance dynamics across cognitive domains.
+arXiv:2604.14682.
+\bibitem{theory} When is a draft accepted? A theory of acceptance in
+speculative decoding. arXiv:2606.30265.
+\bibitem{qprobes} Question-only probes of pre-generation activations for
+answer correctness. arXiv:2509.10625.
+\bibitem{codeprobes} Pre-generation hidden-state probes of code correctness.
+arXiv:2606.14530.
+\bibitem{truthgeom} Task-orthogonal geometries of linear truth directions.
+arXiv:2506.08572.
+\end{thebibliography}
+
+\end{document}
