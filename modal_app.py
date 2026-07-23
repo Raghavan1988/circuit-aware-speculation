@@ -1662,7 +1662,8 @@ def probe(run_id: str = "sweep-2026-07-11T203836", layers: str = "6,12,18,24"):
 def fit_autoresearch(run_id: str = "sweep-2026-07-11T203836",
                      eval_split: str = "dev", layers: str = "6,12,18,24",
                      spec_json: str = "", seed: int = 0, c_reg: float = 0.1,
-                     domain_control: bool = False) -> dict:
+                     domain_control: bool = False,
+                     frozen_transfer: bool = False) -> dict:
     """I13/I23 (D023): score PRE-ROUND candidate signals from the TARGET-frontier
     representation vs the frozen `preround_hardened` baseline (~0.73 AUROC), with
     equal-capacity norm-matched + random controls under prompt-grouped OOF.
@@ -1673,13 +1674,19 @@ def fit_autoresearch(run_id: str = "sweep-2026-07-11T203836",
     --spec-json. CPU-only; dev-only by default (test stays frozen). Every number is
     script-computed from immutable artifacts (AGENTS.md); results are CANDIDATES,
     not claims — G1/G2 gates are tripped by hand and "circuit" language stays
-    G2-gated (D020)."""
+    G2-gated (D020).
+
+    frozen_transfer=True runs the STRICT dev->test protocol instead
+    (score_spec_frozen): scaler/probe/imputation/calibrator all fit on dev only,
+    test scored exactly once; eval_split is ignored (the fit side is always dev,
+    the scored side always test); output lands in
+    autoresearch_frozen_transfer<tag>.json."""
     import json as _json
 
     from cas.autoresearch.features import default_seed_specs
     from cas.autoresearch.types import FeatureSpec
     from scripts.fit_autoresearch import (_baseline_by_round, _load_frontier,
-                                          score_spec)
+                                          score_spec, score_spec_frozen)
 
     layer_t = tuple(int(x) for x in layers.split(","))
     acts, meta = _load_frontier(f"/artifacts/probes/{run_id}", layer_t)
@@ -1692,14 +1699,20 @@ def fit_autoresearch(run_id: str = "sweep-2026-07-11T203836",
     else:
         specs = default_seed_specs(layer_t)
 
-    results = [score_spec(s, acts, meta, base_by_key, eval_split, seed=seed,
-                          c_reg=c_reg, include_domain=domain_control)
-               for s in specs]
+    if frozen_transfer:
+        results = [score_spec_frozen(s, acts, meta, base_by_key, seed=seed,
+                                     c_reg=c_reg, include_domain=domain_control)
+                   for s in specs]
+    else:
+        results = [score_spec(s, acts, meta, base_by_key, eval_split, seed=seed,
+                              c_reg=c_reg, include_domain=domain_control)
+                   for s in specs]
     os.makedirs(f"/artifacts/analysis/{run_id}", exist_ok=True)
     tag = "_domctl" if domain_control else ""
-    outp = f"/artifacts/analysis/{run_id}/autoresearch_{eval_split}{tag}.json"
+    stem = "frozen_transfer" if frozen_transfer else eval_split
+    outp = f"/artifacts/analysis/{run_id}/autoresearch_{stem}{tag}.json"
     with open(outp, "w") as f:
-        _json.dump({"run": run_id, "eval": eval_split,
+        _json.dump({"run": run_id, "eval": stem,
                     "domain_control": domain_control, "results": results}, f,
                    indent=2)
     artifacts.commit()
@@ -1766,7 +1779,8 @@ def fit_autoresearch(run_id: str = "sweep-2026-07-11T203836",
 @app.local_entrypoint()
 def autoresearch(run_id: str = "sweep-2026-07-11T203836", eval_split: str = "dev",
                  layers: str = "6,12,18,24", spec_json: str = "", seed: int = 0,
-                 c_reg: float = 0.1, domain_control: bool = False):
+                 c_reg: float = 0.1, domain_control: bool = False,
+                 frozen_transfer: bool = False):
     """Score pre-round candidate signals vs the frozen 0.73 bar (D023).
 
     eval_split stays 'dev' until the deliberate one-shot 'test' pass. LAPTOP-SAFE:
@@ -1774,9 +1788,12 @@ def autoresearch(run_id: str = "sweep-2026-07-11T203836", eval_split: str = "dev
         modal run --detach modal_app.py::autoresearch --eval-split dev
     Read results afterwards with `autoresearch_show` (a detached run's return value
     never reaches your local shell).
+
+    --frozen-transfer runs the strict dev->test protocol (fit on dev only, score
+    test once; eval_split ignored) -> autoresearch_frozen_transfer<tag>.json.
     """
     fit_autoresearch.remote(run_id, eval_split, layers, spec_json, seed, c_reg,
-                            domain_control)
+                            domain_control, frozen_transfer)
 
 
 @app.function(image=image, volumes=VOLUMES, timeout=300)  # CPU-only, read-only

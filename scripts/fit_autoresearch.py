@@ -89,29 +89,44 @@ def _baseline_by_round(run_dir: str):
 _BASE_COLS = ("history_ema", "prev_target_entropy", "prev_target_margin")
 
 
-def _baseline_design(meta_rows, base_by_key, include_domain=False):
-    """X_base for meta_rows (same order): the frozen `preround_hardened` numeric
-    stack (mean-imputed + missing-flag per column; mirrors
-    scripts/fit_baselines._design), OPTIONALLY augmented with a one-hot `domain`
-    block -- the C04 domain-controlled baseline. A candidate's lift is confounded
-    on multi-domain corpora unless domain is in the baseline (the representation
-    encodes domain, which predicts acceptance); `include_domain=True` removes that
-    confound so the test becomes "beyond entropy AND domain"."""
-    import numpy as np
-
+def _baseline_stats(meta_rows, base_by_key, include_domain=False):
+    """Imputation/vocabulary statistics for `_baseline_design`: per-column means
+    of the observed baseline values + the sorted domain vocabulary. The frozen
+    dev->test pass computes these on DEV rows and passes them to
+    `_baseline_design` for BOTH splits, so not even an imputation mean is read
+    from test."""
     vals = {c: [] for c in _BASE_COLS}
-    recs = []
     for m in meta_rows:
         rec = base_by_key.get((m["request_id"], m["round_id"]), {})
-        recs.append(rec)
         for c in _BASE_COLS:
             v = rec.get(c)
             if v is not None:
                 vals[c].append(float(v))
     means = {c: (sum(vs) / len(vs) if vs else 0.0) for c, vs in vals.items()}
     domains = sorted({m["domain"] for m in meta_rows}) if include_domain else []
+    return {"means": means, "domains": domains}
+
+
+def _baseline_design(meta_rows, base_by_key, include_domain=False, stats=None):
+    """X_base for meta_rows (same order): the frozen `preround_hardened` numeric
+    stack (mean-imputed + missing-flag per column; mirrors
+    scripts/fit_baselines._design), OPTIONALLY augmented with a one-hot `domain`
+    block -- the C04 domain-controlled baseline. A candidate's lift is confounded
+    on multi-domain corpora unless domain is in the baseline (the representation
+    encodes domain, which predicts acceptance); `include_domain=True` removes that
+    confound so the test becomes "beyond entropy AND domain".
+
+    `stats` (from `_baseline_stats`) freezes the imputation means and the domain
+    one-hot vocabulary; None (default) computes them from `meta_rows` — the
+    original within-split behavior."""
+    import numpy as np
+
+    st = stats if stats is not None else _baseline_stats(
+        meta_rows, base_by_key, include_domain=include_domain)
+    means, domains = st["means"], st["domains"]
     X = []
-    for m, rec in zip(meta_rows, recs):
+    for m in meta_rows:
+        rec = base_by_key.get((m["request_id"], m["round_id"]), {})
         feat = []
         for c in _BASE_COLS:
             v = rec.get(c)
@@ -149,6 +164,45 @@ def score_spec(spec: FeatureSpec, acts, meta, base_by_key, eval_split, seed=0,
     res["spec"] = {"name": spec.name, "family": spec.family,
                    "layers": list(spec.layers), "params": spec.params}
     res["eval_split"] = eval_split
+    return res
+
+
+def score_spec_frozen(spec: FeatureSpec, acts, meta, base_by_key, seed=0,
+                      c_reg=1.0, include_domain=False):
+    """Strict dev->test transfer for one spec (the frozen predictive test pass).
+
+    Selection and tuning happened on dev (D025). Here EVERY fitted object —
+    scaler, probe, imputation means, domain one-hot vocabulary, Platt
+    calibrator — is frozen on dev, and the untouched test rows are scored
+    exactly once (cas.autoresearch.eval.frozen_transfer_lift). Unlike
+    `score_spec(eval_split='test')`, no model is ever fit on test rows."""
+    import numpy as np
+
+    from cas.autoresearch.eval import frozen_transfer_lift
+    from cas.autoresearch.features import build_features
+
+    acts_d, meta_d = _subset(acts, meta, "dev")
+    acts_t, meta_t = _subset(acts, meta, "test")
+    if not meta_d or not meta_t:
+        return {"spec": spec.name,
+                "note": f"missing split rows: dev={len(meta_d)} test={len(meta_t)}"}
+    stats = _baseline_stats(meta_d, base_by_key, include_domain=include_domain)
+    X_base_d = _baseline_design(meta_d, base_by_key,
+                                include_domain=include_domain, stats=stats)
+    X_base_t = _baseline_design(meta_t, base_by_key,
+                                include_domain=include_domain, stats=stats)
+    X_cand_d = build_features(spec, acts_d, meta_d)
+    X_cand_t = build_features(spec, acts_t, meta_t)
+    y_d = np.array([1 if m["accept"] else 0 for m in meta_d])
+    y_t = np.array([1 if m["accept"] else 0 for m in meta_t])
+    g_d = np.array([m["request_id"] for m in meta_d])
+    g_t = np.array([m["request_id"] for m in meta_t])
+    res = frozen_transfer_lift(X_base_d, X_cand_d, y_d, g_d,
+                               X_base_t, X_cand_t, y_t, g_t,
+                               seed=seed, c_reg=c_reg)
+    res["spec"] = {"name": spec.name, "family": spec.family,
+                   "layers": list(spec.layers), "params": spec.params}
+    res["eval_split"] = "test"
     return res
 
 
