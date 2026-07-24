@@ -297,3 +297,20 @@ D025; `docs/autoresearch_outcomes.md`, `docs/causal_intervention_report.md`).
 - Document the corpus's secondary framing (naturally-labeled small/large-model disagreement dataset; see `RESEARCH_SPEC.md`) and include the governance documents (claims ledger, decision log) in the public release.
 - Include a concise technical article built on the two I18 headline figures; open an upstream issue or pull request where the artifact solves a concrete serving problem.
 - Each release stage requires the corresponding gate in `RESEARCH_SPEC.md`; no component may present claims beyond the ledger.
+
+## Build status (2026-07-23, Claude — I19 C04 integration)
+
+- **I19:** C04 folded into `paper/main.tex` as §6 (`sec:atlas`) per D026 —
+  atlas framing + domain control, the pre-registered T1–T4 frozen-test table
+  (`tab:atlas`), the two disclosures (expected-null reversal on Llama-code;
+  weakest cell Qwen-v1 summ p=0.027), and the phase-axis narrowing. Also added:
+  contribution bullet 4, an abstract clause, a Limitations scope paragraph, and
+  a Conclusion sentence. All numbers copied from the script-generated ledger
+  entry of commit b8eb122; none hand-derived. Compiles clean: 11 pages
+  (was 9), 0 LaTeX errors, 0 undefined references.
+- **Still open on I19:** figures (none exist yet — the atlas heatmap, frozen-test
+  forest plot, dose–response, length-decay and reliability plots are the priority
+  set), full bibliographic entries, I21 citing-sweep refresh at freeze, and the
+  G2 language decision (D020, human gate). I19 stays IN_PROGRESS.
+- **I18:** atlas-evidence half remains done; the figure half is unchanged and is
+  now the binding constraint on I19.
