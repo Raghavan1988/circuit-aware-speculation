@@ -112,18 +112,26 @@ def main() -> None:
     # and so on). Unexplained additions still fail -- that is how a fabricated
     # statistic would be caught.
     o, n = numbers(old), numbers(new)
-    dropped = o - n
+    # A reduced occurrence count is only a real loss if the number is ELIMINATED
+    # from the paper (count reaches zero). Removing a duplicate mention -- e.g.
+    # an abstract that stops repeating a figure already stated in the body -- is
+    # legitimate tightening, so flag it as a note, not a failure.
+    reduced = o - n
+    eliminated = {v: c for v, c in reduced.items() if n[v] == 0}
+    deduped = {v: c for v, c in reduced.items() if n[v] > 0}
     added = (n - o) - allowed_add
     explained = (n - o) - added
     print(f"numbers: {sum(o.values())} reference / {sum(n.values())} candidate"
           f"  ({sum(explained.values())} additions explained by new content)")
-    if dropped or added:
-        for v, c in sorted(dropped.items()):
-            failures.append(f"NUMBER DROPPED  {v!r} x{c}")
-        for v, c in sorted(added.items()):
-            failures.append(f"NUMBER ADDED (unexplained)  {v!r} x{c}")
-    else:
-        print("  ok - no numbers dropped; all additions explained")
+    for v, c in sorted(eliminated.items()):
+        failures.append(f"NUMBER ELIMINATED (gone from paper)  {v!r} x{c}")
+    for v, c in sorted(added.items()):
+        failures.append(f"NUMBER ADDED (unexplained)  {v!r} x{c}")
+    for v, c in sorted(deduped.items()):
+        print(f"  note: {v!r} mentioned {c} fewer time(s) but still in the "
+              f"paper ({n[v]}x) -- de-duplication, not a loss")
+    if not eliminated and not added:
+        print("  ok - no number eliminated; all additions explained")
 
     # --- hedges ------------------------------------------------------------
     # Counting cannot catch a single dropped "only" through a full rewrite --

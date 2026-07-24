@@ -36,59 +36,29 @@ artifact and code release follow the policy's impact gate.}}
 \maketitle
 
 \begin{abstract}
-A large model writes one token at a time, and that is slow. Each new token needs
-a full pass through the model. Speculative decoding (SD) is one way to make it
-faster. A small drafter model guesses the next few tokens. The large target
-model then checks them all in one pass. Guesses that match what the target would
-have written are kept. Each kept guess saves a pass. The rest are thrown out.
-The compute that made them is lost. So it pays to know, up front, when a round
-is worth drafting.
-
-In SD, every control signal in deployed use today is worked out \emph{after} the
-draft tokens exist: draft model entropy, agreement heads on draft hidden states,
-or acceptance history. By then you have paid for the draft. That is the wrong end
-of the round.
-
-We show that the \emph{target} model already holds the signal, one round ahead.
-We call it the frontier state: the target's own cached residual stream state at
-the last checked token. It is in memory when the round starts. It comes free
-from the check that just ran. A linear probe on the frontier state predicts
-whether the \emph{next} round's first drafted token will be accepted,
-\emph{before any draft compute is spent}.
-
-We score the probe against a hardened pre-round baseline. That baseline uses
-target entropy from the round before, top-1/top-2 margin, recent acceptance
-history, and domain. On top of it, the probe adds $+0.05$--$+0.10$ AUROC. The
-gain is replicated across two model families (Qwen2.5-7B/0.5B,
-Llama-3.1-8B/3.2-1B) and two corpora (4-domain and 7-axis). All of these numbers
-come from frozen test splits under two protocols. One of them is a strict
-dev$\to$test transfer in which no parameter, scaler, or calibrator ever touches
-test data.
-
-Controls back this up. Random controls with equal capacity collapse to gains at
-chance level. Platt calibration leaves probabilities you can act on (test ECE
-$0.016$--$0.037$). The probe costs ${\sim}16\,\mu s$ per round, or
-${\sim}0.015\%$ of a decode round.
-
-Steering along the probe direction disrupts realized acceptance $2$--$10\times$
-more than random and shuffled controls matched for norm. The effect grows with
-dose. It holds beyond the entropy change that steering brings with it. It shows
-up in both model families. That is evidence that the state is causally
-load-bearing for acceptance, not a side effect.
-
-The signal is \emph{first-token only}. Survival probes run per length show no
-usable lift for run length ($k\ge4$). That draws a clean line between this
-result and draft length prediction.
-
-In a separate line of work, we built an atlas of how acceptance behaves. We ran
-it as a frozen test against pre-registered criteria. In it, acceptance is
-strongly shaped by token category. Structural tokens gain $+0.12$ to $+0.21$
-over entity tokens, and are CI-clean in all $15$ domain cells. A phase axis
-based on absolute position does not survive.
-
-We frame the finding as an honest diagnostic. It adds to draft entropy control
-within the round rather than replacing it. Its decision value is strongest where
-drafts are costly.
+A large model writes one token per pass, which is slow. Speculative decoding
+(SD) speeds it up. A small drafter guesses the next few tokens. The large target
+model checks them in one pass and keeps the ones it agrees with. Rejected
+guesses waste that draft compute. So it helps to know up front when a round is
+worth drafting. Every signal used for this today is worked out \emph{after} the
+draft exists, once the cost is paid. We show that the target model holds the
+signal one round early. When it checks a round, it leaves a cached state at the
+last accepted token. We call this the frontier state. It is free, and it sits in
+memory before the next round drafts. A linear probe on this state predicts
+whether the \emph{next} round's first token will be accepted, before any draft
+runs. We test it against a hard baseline: the target's own entropy, top-1/top-2
+margin, recent acceptance, and domain. On top of that bar, the probe adds
+$+0.05$--$+0.10$ AUROC. The gain holds across two model families
+(Qwen2.5-7B/0.5B, Llama-3.1-8B/3.2-1B) and two corpora. It holds on frozen test
+splits under two protocols. One is a strict dev$\to$test transfer that never
+touches test data. Random controls of equal capacity add nothing. Steering the
+state along the probe direction disrupts real acceptance $2$--$10\times$ more
+than matched controls. That shows the state is causally load-bearing, not a side
+effect. The signal is \emph{first-token only}: it does not predict run length
+($k\ge4$). Separately, a pre-registered atlas shows acceptance is shaped by token
+category. Structural tokens gain $+0.12$ to $+0.21$ over entity tokens, in all
+$15$ domain cells. A phase axis does not survive. We offer the signal as an
+honest diagnostic. It adds to within-round control where drafts are costly.
 \end{abstract}
 
 \section{Introduction}
@@ -177,99 +147,6 @@ exact-match SD $\times$ \emph{calibrated} odds $\times$
 \emph{baseline-controlled} against free entropy, margin and history signals
 $\times$ a \emph{separate} drafter $\times$ a \emph{skip-capable} decision
 $\times$ a \emph{first-token} target.
-
-\section{Terms used in this paper}
-\label{sec:terms}
-
-This section defines each term the paper uses. Read it once and the rest of
-the paper should need no glossary.
-
-\begin{description}
-
-\item[Speculative decoding (SD)] A way to make a large model write faster. A
-small model guesses the next few tokens. The large model then checks all of
-them in one pass. Good guesses are kept, so one pass yields several tokens.
-
-\item[Target] The large model. It owns the output. Each token the system
-emits is a token the target would have written on its own.
-
-\item[Drafter] The small, cheap model that guesses. In this work the drafter is
-a separate model, not a head bolted onto the target. It shares the target's
-tokenizer.
-
-\item[Lossless (exact-match) decoding] The output is exactly what the target
-would have written by itself. Speed goes up. The text does not change. Each
-result here is lossless.
-
-\item[Round] One cycle of the loop: the drafter proposes up to $L$ tokens, the
-target checks them, and the agreed tokens are kept.
-
-\item[Acceptance] Whether a drafted token survives the check. A token is
-accepted when it matches what the target would have picked at that spot.
-
-\item[First-token acceptance] Whether the \emph{first} drafted token of a round
-is accepted. This is what our probe predicts. It is a yes/no question about one
-token, not a guess at how many tokens will survive.
-
-\item[Accepted run length] How many drafted tokens in a row are accepted in a
-round. Our signal does \emph{not} predict this. That limit is a main finding,
-not an oversight.
-
-\item[Frontier state] The signal this paper is about. When the target checks a
-round, it computes an internal state for each token it reads. We take that
-state at the last kept token, which we call the frontier. We take it at
-four depths in the target (layers $6$, $12$, $18$ and $24$) and join them into
-one long vector. That gives $14{,}336$ numbers for the Qwen pair and
-$16{,}384$ for the Llama pair. Three points matter. It is the \emph{target's}
-state, not the drafter's. It is free, because the check that just ran already
-built it. And it sits in memory \emph{before} the next round drafts, which
-is why we can act on it early.
-
-\item[Probe] A simple linear model that reads the frontier state and outputs a
-score for how likely the next drafted token is to be accepted. It is one dot
-product. It is not a neural network.
-
-\item[Baseline (the bar)] The set of cheap signals a probe must beat to be
-worth anything. Ours holds the target's entropy and top-1/top-2 margin from the
-round before, a running average of recent acceptance, and the task domain. We
-made this bar deliberately hard, because a signal that only beats a weak bar
-tells you nothing.
-
-\item[Development split and test split] We cut the data in two by prompt, never
-by token. We built and chose everything on the development split. The test
-split was scored once, at the end, to check the result.
-
-\item[AUROC] A score for how well a model ranks. It runs from $0.5$ to $1.0$.
-A model at $0.5$ ranks no better than a coin flip. A model at $1.0$ ranks each
-accepted token above each rejected one. We report the \emph{gain} in AUROC
-over the baseline, so $+0.05$ means the probe adds that much on top of the bar.
-
-\item[ECE (expected calibration error)] How honest the stated odds are. If a
-model says $70\%$ and is right $70\%$ of the time, its error is zero. Lower is
-better.
-
-\item[Calibration and the Platt map] Raw probe scores rank well but state the
-odds badly. A Platt map is a small correction that fixes the odds without
-changing the ranking, so AUROC is untouched.
-
-\item[Regret] What a decision costs compared with the best choice you could
-have made. We use it to ask whether the signal changes any real decision, not
-just whether it scores well.
-
-\item[Equal-capacity control] A fake signal with the same number of columns as
-the real one, filled with random noise. If the real signal wins only because it
-is large, the control wins too. Ours do not, so the gain is information rather
-than size.
-
-\item[Protocol P1] The test rows are scored using folds fit within the test
-split itself. Nothing is chosen on test, but models do see test rows.
-
-\item[Protocol P2] The strict one. The probe, the scaler, the fill-in values,
-the domain list and the calibrator are all frozen on development data. Test
-rows are scored exactly once. No part of the model ever touches test data. This
-is the protocol that matches deployment.
-
-\end{description}
 
 \section{Related work}
 \label{sec:related}
@@ -928,6 +805,99 @@ new container, the headline numbers hold to within ${\pm}0.001$ AUROC. The
 code, the sealed artifacts, and the full claims ledger are ready for release
 under a staged policy. The ledger lists all negative results and two integrity
 disclosures.
+
+\section{Terms used in this paper}
+\label{sec:terms}
+
+This reference section defines each term the paper uses. It collects in one
+place the definitions the body relies on.
+
+\begin{description}
+
+\item[Speculative decoding (SD)] A way to make a large model write faster. A
+small model guesses the next few tokens. The large model then checks all of
+them in one pass. Good guesses are kept, so one pass yields several tokens.
+
+\item[Target] The large model. It owns the output. Each token the system
+emits is a token the target would have written on its own.
+
+\item[Drafter] The small, cheap model that guesses. In this work the drafter is
+a separate model, not a head bolted onto the target. It shares the target's
+tokenizer.
+
+\item[Lossless (exact-match) decoding] The output is exactly what the target
+would have written by itself. Speed goes up. The text does not change. Each
+result here is lossless.
+
+\item[Round] One cycle of the loop: the drafter proposes up to $L$ tokens, the
+target checks them, and the agreed tokens are kept.
+
+\item[Acceptance] Whether a drafted token survives the check. A token is
+accepted when it matches what the target would have picked at that spot.
+
+\item[First-token acceptance] Whether the \emph{first} drafted token of a round
+is accepted. This is what our probe predicts. It is a yes/no question about one
+token, not a guess at how many tokens will survive.
+
+\item[Accepted run length] How many drafted tokens in a row are accepted in a
+round. Our signal does \emph{not} predict this. That limit is a main finding,
+not an oversight.
+
+\item[Frontier state] The signal this paper is about. When the target checks a
+round, it computes an internal state for each token it reads. We take that
+state at the last kept token, which we call the frontier. We take it at
+four depths in the target (layers $6$, $12$, $18$ and $24$) and join them into
+one long vector. That gives $14{,}336$ numbers for the Qwen pair and
+$16{,}384$ for the Llama pair. Three points matter. It is the \emph{target's}
+state, not the drafter's. It is free, because the check that just ran already
+built it. And it sits in memory \emph{before} the next round drafts, which
+is why we can act on it early.
+
+\item[Probe] A simple linear model that reads the frontier state and outputs a
+score for how likely the next drafted token is to be accepted. It is one dot
+product. It is not a neural network.
+
+\item[Baseline (the bar)] The set of cheap signals a probe must beat to be
+worth anything. Ours holds the target's entropy and top-1/top-2 margin from the
+round before, a running average of recent acceptance, and the task domain. We
+made this bar deliberately hard, because a signal that only beats a weak bar
+tells you nothing.
+
+\item[Development split and test split] We cut the data in two by prompt, never
+by token. We built and chose everything on the development split. The test
+split was scored once, at the end, to check the result.
+
+\item[AUROC] A score for how well a model ranks. It runs from $0.5$ to $1.0$.
+A model at $0.5$ ranks no better than a coin flip. A model at $1.0$ ranks each
+accepted token above each rejected one. We report the \emph{gain} in AUROC
+over the baseline, so $+0.05$ means the probe adds that much on top of the bar.
+
+\item[ECE (expected calibration error)] How honest the stated odds are. If a
+model says $70\%$ and is right $70\%$ of the time, its error is zero. Lower is
+better.
+
+\item[Calibration and the Platt map] Raw probe scores rank well but state the
+odds badly. A Platt map is a small correction that fixes the odds without
+changing the ranking, so AUROC is untouched.
+
+\item[Regret] What a decision costs compared with the best choice you could
+have made. We use it to ask whether the signal changes any real decision, not
+just whether it scores well.
+
+\item[Equal-capacity control] A fake signal with the same number of columns as
+the real one, filled with random noise. If the real signal wins only because it
+is large, the control wins too. Ours do not, so the gain is information rather
+than size.
+
+\item[Protocol P1] The test rows are scored using folds fit within the test
+split itself. Nothing is chosen on test, but models do see test rows.
+
+\item[Protocol P2] The strict one. The probe, the scaler, the fill-in values,
+the domain list and the calibrator are all frozen on development data. Test
+rows are scored exactly once. No part of the model ever touches test data. This
+is the protocol that matches deployment.
+
+\end{description}
 
 \begin{thebibliography}{99}
 \small
