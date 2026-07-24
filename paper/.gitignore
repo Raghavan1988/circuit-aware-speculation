@@ -2,3 +2,7 @@
 *.log
 *.out
 *.pdf
+# Figure PDFs are tracked: they are build inputs, regenerated from sealed
+# artifacts by scripts/make_figures.py (the analysis JSONs themselves are not
+# in the repo, so the tracked PDFs are what makes the paper build standalone).
+!figures/*.pdf

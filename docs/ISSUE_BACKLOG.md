@@ -372,3 +372,22 @@ D025; `docs/autoresearch_outcomes.md`, `docs/causal_intervention_report.md`).
 - I18 figure work is complete for the current evidence set. I18 and I19 stay
   IN_PROGRESS pending the calibration decision above, full bibliographic
   entries, the I21 citing-sweep refresh at freeze, and the G2 gate (D020).
+
+## Build status (2026-07-23, Claude — I19 manuscript build entry point)
+
+- **Gap closed:** there was no committed way to build the paper. No Makefile, no
+  build script, and `pdflatex` appeared in zero tracked files — the command
+  existed only in session transcripts. Added `paper/Makefile` with four targets
+  (`all`, `figures`, `artifacts`, `clean`) and a build section in `README.md`.
+- `make -C paper` works on a fresh clone with no Modal access, because the
+  figure PDFs are tracked; `make -C paper artifacts && make -C paper figures`
+  is only needed when the sealed analysis JSONs change.
+- The build gates on unresolved references: `pdflatex` exits 0 on undefined
+  `\ref`, so an unchecked build silently ships `??` into the PDF. Verified the
+  gate fires by injecting a bad `\ref` (build exits non-zero) and that a clean
+  build still passes. `.DELETE_ON_ERROR` is set — without it a failed build left
+  a stale `main.pdf` newer than `main.tex`, so the next `make` reported
+  "nothing to be done" and the failure looked repaired. Both behaviours tested.
+- `paper/.gitignore` fix (`!figures/*.pdf`) committed alongside: `make figures`
+  writes into `figures/`, and without the negation any new or renamed figure PDF
+  is silently ignored on a fresh clone.

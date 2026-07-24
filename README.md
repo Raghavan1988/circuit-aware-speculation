@@ -77,6 +77,20 @@ Agents should first read [AGENTS.md](AGENTS.md), then select an unblocked item f
 - [Claims ledger](docs/CLAIMS_LEDGER.md): evidence status for every proposed conclusion.
 - [Decision log](docs/DECISIONS.md): durable methodological and architectural decisions.
 - [Execution plan](PLAN.md): schedule mapped to backlog issues, decision gates, budget, and the competitive landscape.
+- [Manuscript](paper/main.tex): anonymous draft; build it with `make -C paper` (see below).
+
+## Building the manuscript
+
+```sh
+make -C paper           # build paper/main.pdf from main.tex + tracked figures
+make -C paper figures   # regenerate paper/figures/*.pdf from sealed artifacts
+make -C paper artifacts # pull those artifacts from the Modal volume first
+```
+
+Figure PDFs are tracked, so a plain `make -C paper` works on a fresh clone with
+no Modal access. `figures` and `artifacts` are only needed when the underlying
+analysis JSONs change. The build fails on unresolved references rather than
+silently emitting `??`.
 
 ## License and citation
 
