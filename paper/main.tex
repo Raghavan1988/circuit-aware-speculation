@@ -54,6 +54,10 @@ change, in both model families---evidence that the representation is causally
 load-bearing for acceptance, not epiphenomenal. The signal is
 \emph{first-token only}: per-length survival probes show no usable lift for run
 length ($k\ge4$), cleanly separating this result from draft-length prediction.
+Independently, a behavioral acceptance atlas---frozen-tested against
+pre-registered criteria---shows that acceptance is strongly structured by token
+category (structural tokens $+0.12$ to $+0.21$ over entity tokens, CI-clean in
+all $15$ domain cells), while an absolute-position phase axis does not survive.
 We position the finding as an honest diagnostic: it complements, rather than
 replaces, within-round draft-entropy control, and its decision value
 concentrates in expensive-draft regimes.
@@ -104,6 +108,13 @@ realized acceptance $2$--$10\times$ more than random and shuffled controls,
 dose-dependently, beyond the induced entropy change, at all four probed layers,
 in both families (\S\ref{sec:causal}). We deliberately describe this as
 representation-level causal evidence, not a mechanistic account.
+\item \textbf{Behavioral structure in acceptance itself.} Independently of any
+probe, an acceptance atlas resolved by token category shows that structurally
+forced tokens (delimiters, operators, numbers) are accepted $+0.12$ to $+0.21$
+more often than entity and reasoning-transition tokens---CI-clean in all $15$
+domain cells across the three settings, on a frozen test split against criteria
+pre-registered before unblinding (\S\ref{sec:atlas}). The companion
+\emph{phase} axis does not survive and is reported as narrowed out.
 \item \textbf{Honest boundaries.} The signal is first-token only: per-length
 survival probes are null-to-harmful at $k\ge4$, so the representation does
 \emph{not} support run-length selection (\S\ref{sec:length})---differentiating
@@ -451,6 +462,102 @@ replays (serving-efficiency $2.4015$ vs.\ $2.4022$ for best-fixed, while the
 contextual entropy stop reaches $2.6715$)---context, not competition, for
 representation-level signals.
 
+\section{What acceptance is about: the token-category atlas}
+\label{sec:atlas}
+
+The preceding sections establish that a pre-round signal exists and is
+causally load-bearing. This section asks a complementary, purely
+\emph{behavioral} question, with no probes and no internal states: does
+acceptance itself have legible structure? We answer with an
+\emph{acceptance atlas}---acceptance rate resolved by token category and by
+generation phase, computed on the same sealed traces, with prompt-grouped
+bootstrap CIs. Labels are the counterfactual per-position agreement record
+(overlapping category taxonomy v1.0.0; absolute-position phase bins).
+
+\paragraph{Domain control.} Domain marginals reproduce the domain-grain
+acceptance axis reported previously [arXiv:2604.14682] (e.g.\ on Qwen-v1 dev:
+summarization $0.657 <$ chat $0.700 <$ code $0.813 <$ math $0.875$). We treat
+that axis as a \emph{control} that our pipeline recovers; our contribution is
+the finer category-within-domain structure that survives conditioning on it.
+
+\subsection{Structural tokens are accepted far more often than entity tokens}
+\label{sec:atlas-contrast}
+
+We pre-specified a single contrast on development data---HIGH
+(\texttt{code\_delimiter}, \texttt{operator}, \texttt{number}, pooled) minus
+LOW (\texttt{named\_entity}, \texttt{reasoning\_transition}, pooled)---together
+with criteria T1--T4 and their outcome mapping, and committed them before the
+test split was unblinded. Table~\ref{tab:atlas} reports the one-shot test
+evaluation, with verdicts computed by script against those criteria exactly as
+committed.
+
+\begin{table}[t]
+\centering
+\caption{One-shot frozen \textbf{test} evaluation of the acceptance atlas
+against criteria pre-registered before unblinding. T1: overall HIGH$-$LOW
+contrast. T2: contrast positive and CI-clean within every domain cell. T3:
+tail stability against the setting's overall marginal. T4: phase spread
+(max$-$min), pre-registered as an expected null on the Qwen settings.
+PASS 3/3.}
+\label{tab:atlas}
+\begin{tabular}{lccc}
+\toprule
+Criterion & Qwen-v1 & Qwen-v2 & Llama-v1 \\
+ & {\footnotesize(152{,}592 tok)} & {\footnotesize(209{,}160)} &
+ {\footnotesize(124{,}000)} \\
+\midrule
+T1 overall contrast & $+0.1947$ & $+0.2104$ & $+0.1177$ \\
+ & {\footnotesize[+0.172, +0.216]} & {\footnotesize[+0.193, +0.228]} &
+ {\footnotesize[+0.103, +0.134]} \\
+ & {\footnotesize$\pdle=0$} & {\footnotesize$\pdle=0$} &
+ {\footnotesize$\pdle=0$} \\
+T2 within-domain & 4/4 CI-clean & 7/7 CI-clean & 4/4 CI-clean \\
+T3 tail stability & PASS {\footnotesize(marg.\ 0.742)} &
+PASS {\footnotesize(0.688)} & PASS {\footnotesize(0.833)} \\
+T4 phase spread & $0.0084$ PASS & $0.0036$ PASS &
+$0.0589$ {\footnotesize(descr.)} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The contrast is large ($+0.12$ to $+0.21$ acceptance), and it is not domain
+identity in disguise: it is CI-clean positive in \emph{all 15} domain cells
+across the three settings. The category ordering's tails are stable across
+families---\texttt{code\_delimiter}, \texttt{operator}, \texttt{number},
+\texttt{clause\_boundary}, and \texttt{punctuation} sit above the marginal in
+every setting, and \texttt{named\_entity} sits below it in every setting. The
+reading is intuitive: a small drafter reliably produces tokens that are locally
+forced by syntax, and misses tokens that require the target's knowledge or
+commitment. \texttt{reasoning\_transition} is low on the Qwen pair only.
+
+Two disclosures. The pre-registered \emph{expected null} reversed positive:
+Llama-code was flat on dev ($-0.006$, at a $0.913$ acceptance ceiling) and was
+declared in advance as a cell permitted to be null, but came in at
+$+0.0674$ {\footnotesize[+0.0304, +0.1097]} on test---the dev null was
+ceiling-induced noise. The weakest surviving cell is Qwen-v1 summarization,
+$+0.0544$ with $\pdle=0.027$ (percentile CI lower bound $-0.002$): it clears
+the pre-registered $p<0.05$ bar, and we flag it as the margin to watch in any
+re-run.
+
+\subsection{The phase axis does not survive}
+\label{sec:atlas-phase}
+
+The claim as originally posed had a second half---variation across generation
+\emph{phases}---and it did not survive. On both Qwen settings the
+absolute-position phase spread is decisively flat on test ($0.0084$ and
+$0.0036$, against a pre-registered $\le 0.03$ criterion). The Llama pair shows
+a monotone rise (prefix $0.794 \to$ mid $0.824 \to$ late $0.853$), but this is
+one family, a length/mix confound is plausible, and we record it descriptively
+without a claim. We therefore narrow the atlas result to the category axis
+only: absolute-position phase bins carry no cross-family acceptance structure
+at this grain.
+
+A descriptive anomaly, recorded rather than explained: on the Llama pair the
+\texttt{special} category accepts at $0.007$ ($n{=}883$), most likely a
+chat-template or special-token handling divergence between the two pairs
+rather than an acceptance phenomenon. It is excluded from the contrast and
+flagged for separate investigation.
+
 \section{Limitations}
 \label{sec:limitations}
 
@@ -466,7 +573,11 @@ evaluation with the probe in the serving path---our systems gate---has not
 been run and no wall-clock claim is made. Batch-size-1 harness; batch
 interference unmeasured. Calibration under the strict protocol degrades on one
 setting (reported). bf16 argmax-tie trajectory divergence is characterized and
-logged rather than eliminated.
+logged rather than eliminated. The atlas (\S\ref{sec:atlas}) is scoped to an
+overlapping category taxonomy (v1.0.0) over counterfactual fixed-length
+agreement labels, two families and two corpora; its phase half is narrowed out
+rather than supported, and it is a behavioral description that we do not link
+to the probe's internal evidence.
 
 \section{Conclusion}
 
@@ -477,7 +588,9 @@ connect---beyond entropy, margin, history, and domain, in two model families
 and two corpora, under frozen-test discipline. We offer it as an honest
 diagnostic with a precisely mapped boundary: a pre-round admission signal that
 complements within-round control, decision-relevant exactly where drafting is
-expensive.
+expensive. Separately, and without appeal to internal states, acceptance itself
+proves to be strongly structured by token category and---at the grain we
+tested---not by generation phase.
 
 \section*{Reproducibility statement}
 
