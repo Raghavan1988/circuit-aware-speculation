@@ -314,3 +314,61 @@ D025; `docs/autoresearch_outcomes.md`, `docs/causal_intervention_report.md`).
   G2 language decision (D020, human gate). I19 stays IN_PROGRESS.
 - **I18:** atlas-evidence half remains done; the figure half is unchanged and is
   now the binding constraint on I19.
+
+## Build status (2026-07-23, Claude — I18 primary figures, first four)
+
+- **I18:** `scripts/make_figures.py` added — regenerates all figures from sealed
+  analysis JSONs pulled from the `cas-artifacts` Modal volume into a gitignored
+  `artifacts/analysis/` mirror. No statistic is computed in the script; it only
+  reshapes recorded numbers into geometry. Four figures produced and wired into
+  `paper/main.tex`:
+  - `fig_forest.pdf` (§5.1) — frozen-test lift, both protocols, with the
+    equal-capacity control's own lift shown alongside.
+  - `fig_dose.pdf` (§5.4) — dose-response steering, 4 layers × 2 families.
+    Qwen-v2 has no panel (never intervened on); stated in the caption.
+  - `fig_length.pdf` (§5.3) — per-length survival lift with CI bands.
+  - `fig_atlas.pdf` (§6) — C04 atlas heatmap, category × domain, all 3 settings.
+- Cross-checked: every plotted value matches the corresponding manuscript table
+  (`tab:frozen`, `tab:length`, `tab:atlas`) and the ledger entries they came
+  from. Compiles clean: 13 pages, 0 errors, 0 undefined references.
+- `paper/.gitignore` gained `!figures/*.pdf` — the blanket `*.pdf` (for
+  `main.pdf`) was excluding the figure PDFs, which must be tracked for the paper
+  to build without the artifact volume.
+- **Remaining on I18:** reliability/calibration diagram, regret-vs-draft-cost
+  curve, and the intro timing schematic (TikZ, no artifacts needed). I18 and I19
+  both stay IN_PROGRESS.
+
+## Build status (2026-07-23, Claude — I18 remaining three figures)
+
+- **I18:** three further figures added to `scripts/make_figures.py` and wired
+  into `paper/main.tex`:
+  - `fig_schematic.pdf` (§1) — round timeline showing that phi(t) is readable
+    before the drafter runs while every literature signal needs post-draft
+    state. No artifacts (a diagram, not a plot).
+  - `fig_calibration.pdf` (§5.2) — ECE before/after the global Platt map, all
+    three settings, frozen test under P2.
+  - `fig_regret.pdf` (§5.5) — regret reduction vs draft cost, filled markers
+    where the recorded CI clears zero.
+- Compiles clean: 14 pages, 0 errors, 0 undefined references. Figure values
+  re-checked against §5.2 and §5.5 prose (P2 ECE 0.037/0.024/0.021; Qwen-v1
+  CI-robust at exactly one cost, Qwen-v2 at four, Llama at two).
+- **DEVIATION — reliability diagram not produced.** A true reliability diagram
+  (binned observed-vs-predicted) cannot be built from the sealed artifacts:
+  `autoresearch_*_domctl.json` records scalar ECE/Brier only, and no per-example
+  calibrated predictions are stored (`probes/<run>/` holds raw activations and
+  metadata, not scored predictions). Producing one would require re-fitting the
+  probe and re-scoring the frozen test split — which the protocol allows exactly
+  once and which has been spent. `fig_calibration.pdf` is a scalar summary
+  instead, and both the caption and the docstring say so.
+  **Decision needed:** either (a) accept the scalar summary, or (b) add a
+  bin-export to the scorer and re-run scoring for calibration bins only, with a
+  dated DECISIONS entry recording that the re-score is calibration-reporting
+  and does not revisit any test verdict. Not taken unilaterally — it touches the
+  frozen-test protocol.
+- **DEVIATION — schematic is matplotlib, not TikZ.** TikZ is not installed in
+  the local TeX environment, so a TikZ figure could not be compiled or visually
+  verified here. Drawing it with matplotlib keeps the whole figure set on one
+  toolchain and adds no LaTeX dependency; the source is `fig_schematic()`.
+- I18 figure work is complete for the current evidence set. I18 and I19 stay
+  IN_PROGRESS pending the calibration decision above, full bibliographic
+  entries, the I21 citing-sweep refresh at freeze, and the G2 gate (D020).
