@@ -887,3 +887,8 @@ script against the pre-registered T1–T4 exactly as committed in 968c425.
   C04 claim language stays representation-free (no G2 implications — this is
   behavioral structure, not internal-state evidence).
 - Logged by Claude, 2026-07-22.
+- **Superseded 2026-07-23 (D026):** the "companion analysis manuscript" routing
+  above is withdrawn. C04 is folded into the primary manuscript as its own
+  section (`sec:atlas` in `paper/main.tex`), presented as complementary
+  behavioral evidence and explicitly NOT as an explanation of the C10 probe's
+  signal. No separate companion paper is planned.
