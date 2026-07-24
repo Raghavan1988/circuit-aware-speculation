@@ -87,6 +87,18 @@ its residual-stream representation at the \emph{frontier}---the last committed
 position. That state exists in memory before round $r$ drafts; reading it costs
 nothing beyond a probe.
 
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figures/fig_schematic.pdf}
+\caption{Where the signal lives in the round. Verification of round $r{-}1$
+leaves the target's frontier representation $\phi(t)$ in memory; it is readable
+before round $r$'s drafter runs, so a decision taken from it has spent no draft
+compute. Every control signal we are aware of in the literature becomes
+available only after the drafter has run, at the second dashed line.}
+\label{fig:schematic}
+\end{figure}
+
 \paragraph{Contributions.}
 \begin{enumerate}
 \item \textbf{A pre-round diagnostic signal.} A linear probe on the target's
@@ -336,6 +348,20 @@ $+0.039$ {\footnotesize[+0.023, +0.057]} & $0.713\to0.752$ & 0.559 \\
 \end{tabular}
 \end{table}
 
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.72\linewidth]{figures/fig_forest.pdf}
+\caption{Frozen-test incremental lift of the frontier representation over the
+pre-round baseline, both protocols, all three settings (95\% grouped-bootstrap
+CIs; every interval excludes zero, $\pdle=0.000$). Diamonds give the
+equal-capacity random control's own lift over the same baseline: adding the
+same number of random columns does not merely fail to help, it degrades the
+model to near chance (control AUROC $0.53$--$0.56$), so the blue intervals
+measure information rather than capacity.}
+\label{fig:forest}
+\end{figure}
+
 Because the baseline includes domain one-hots and captures are
 domain-stratified, the lift is not domain identification. Because it includes
 the previous round's target entropy and margin---the theoretically governing
@@ -346,6 +372,18 @@ information.}
 
 \subsection{Calibration}
 \label{sec:calibration}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.66\linewidth]{figures/fig_calibration.pdf}
+\caption{Calibration on the frozen test split under the strict protocol. The
+raw high-dimensional probe is badly overconfident; a single global Platt map
+brings it to the baseline's calibration without touching its ranking. Tick
+marks give the calibrated baseline for reference. This is a scalar summary, not
+a reliability diagram---the sealed artifacts record aggregate ECE only.}
+\label{fig:calibration}
+\end{figure}
+
 
 Raw high-dimensional probes are overconfident (uncalibrated combined ECE up to
 $0.14$), but a single global Platt map---AUROC-preserving, leakage-safe---
@@ -389,8 +427,32 @@ $k$ & Qwen-v1 & Qwen-v2 & Llama-v1 \\
 \end{tabular}
 \end{table}
 
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.55\linewidth]{figures/fig_length.pdf}
+\caption{Per-length survival lift (development, domain-controlled; bands are
+95\% grouped-bootstrap CIs). The signal is concentrated entirely at $k{=}1$ and
+has decayed to zero or below by $k{=}4$ in all three settings: the frontier
+representation predicts whether speculation connects, not how far it runs.}
+\label{fig:length}
+\end{figure}
+
 \subsection{Steering the direction disrupts acceptance}
 \label{sec:causal}
+
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figures/fig_dose.pdf}
+\caption{Dose--response steering of the target's frontier residual stream, at
+all four probed layers, in both families for which interventions were run
+(Qwen-v2 was not intervened on and has no panel). Steering along the fitted
+acceptance direction collapses realized acceptance dose-dependently, in an
+inverted-U peaking at $\alpha{=}0$, while norm-matched random and shuffled
+directions at identical dose stay nearly flat.}
+\label{fig:dose}
+\end{figure}
 
 Predictive lift alone cannot distinguish a load-bearing representation from a
 correlated shadow. On held-out test rounds we therefore steer the target's
@@ -412,6 +474,19 @@ agreement-ability. We make no claim about internal computational structure.
 
 \subsection{Cost and decision relevance}
 \label{sec:systems}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.66\linewidth]{figures/fig_regret.pdf}
+\caption{Decision relevance of the pre-round signal as draft cost varies
+(frozen test, strict protocol; higher is better). Filled markers mark costs
+where the recorded CI clears zero. The signal is inert while drafting is cheap
+---every calibrated model simply elects ``always draft''---and pays only once
+draft cost approaches or exceeds verify cost. Qwen-v1 clears the CI bar at a
+single cost point, the protocol sensitivity we report in the text.}
+\label{fig:regret}
+\end{figure}
+
 
 \paragraph{Cost.} Reading $\phi(t)$ is free on the capture path (the states
 are byproducts of verification); the probe is one $14$k-dimensional dot
@@ -519,6 +594,21 @@ $0.0589$ {\footnotesize(descr.)} \\
 \bottomrule
 \end{tabular}
 \end{table}
+
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figures/fig_atlas.pdf}
+\caption{The acceptance atlas on the frozen test split: first-token acceptance
+rate by token category (rows) within domain (columns), one panel per setting.
+Rows are grouped by the pre-registered pools, with the HIGH block at the top
+and the LOW block below the rule. Blank cells fall under the artifact's
+minimum-count threshold. The structural-over-entity ordering holds within every
+domain of every setting, not merely in the marginals. The Llama
+\texttt{special} row ($\approx 0.00$) is the template-handling anomaly noted in
+\S\ref{sec:atlas-phase}, excluded from the contrast.}
+\label{fig:atlas}
+\end{figure}
 
 The contrast is large ($+0.12$ to $+0.21$ acceptance), and it is not domain
 identity in disguise: it is CI-clean positive in \emph{all 15} domain cells
