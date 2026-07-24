@@ -32,7 +32,7 @@ JSONS   := c04_atlas_dev.json c04_atlas_test.json \
            autoresearch_length_dev_domctl.json intervene.json
 MIRROR  := ../artifacts/analysis
 
-.PHONY: all figures artifacts clean
+.PHONY: all figures artifacts readability invariants check clean
 
 # pdflatex writes main.pdf before the reference check below can reject it.
 # Without this, a failed build leaves a stale PDF that is newer than main.tex,
@@ -55,6 +55,18 @@ $(PDF): $(TEX) $(FIGS)
 
 figures:
 	$(PYTHON) ../scripts/make_figures.py
+
+# Prose gates. `readability` reports Flesch Reading Ease per section (target
+# >= 70). `invariants` fails if a rewrite changed any number, shed scope
+# vocabulary, lost a label or figure, or claimed a mechanism (G2/D020).
+# `check` runs both, and is what to run after editing prose.
+readability:
+	$(PYTHON) ../scripts/readability.py --sections
+
+invariants:
+	$(PYTHON) ../scripts/check_invariants.py
+
+check: readability invariants
 
 artifacts:
 	@for r in $(RUNS); do \

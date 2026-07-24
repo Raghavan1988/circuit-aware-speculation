@@ -85,6 +85,7 @@ Agents should first read [AGENTS.md](AGENTS.md), then select an unblocked item f
 make -C paper           # build paper/main.pdf from main.tex + tracked figures
 make -C paper figures   # regenerate paper/figures/*.pdf from sealed artifacts
 make -C paper artifacts # pull those artifacts from the Modal volume first
+make -C paper check     # prose gates: readability score + claim invariants
 ```
 
 Figure PDFs are tracked, so a plain `make -C paper` works on a fresh clone with

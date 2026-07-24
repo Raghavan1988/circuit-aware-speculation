@@ -398,3 +398,22 @@ D025; `docs/autoresearch_outcomes.md`, `docs/causal_intervention_report.md`).
   with `metadata={"CreationDate": None}`; verified byte-identical across two
   consecutive runs. The one-time rewrite of the seven tracked PDFs is the
   timestamp removal only (confirmed: identical after stripping `/CreationDate`).
+
+## Build status (2026-07-23, Claude — I19 plain-English rewrite)
+
+- **I19:** full prose rewrite of `paper/main.tex` for readability (D027). Flesch
+  Reading Ease 27.9 -> 73.5 whole-document, every section >= 70. New glossary
+  section (`sec:terms`) defines all terms upfront; "frontier representation"
+  renamed "frontier state" throughout. 14 -> 17 pages. Builds clean (0 errors,
+  0 undefined refs, 7 figures, 1 bibliography).
+- **Gates (durable):** `scripts/readability.py` (Flesch, per-section) and
+  `scripts/check_invariants.py` (numbers/hedges/structure/vocabulary), wired as
+  `make -C paper check`. Verified: 0 numbers dropped from any scientific section;
+  17 whole-doc additions all glossary definitions; scope vocabulary 119 -> 160;
+  labels/refs/figures/bibitems intact.
+- **A real defect the gate caught:** the section-split for rewriting made the
+  reproducibility section swallow the bibliography, and the assembler re-appended
+  it -> two bibliographies (54 bibitems). Fixed; now 1 bibliography, 27 bibitems.
+- **Still open on I19:** the abstract grew to ~500 words (was 280) and could be
+  tightened; sentence length (~11 words) reads clipped for a journal; the G2
+  language gate (D020) and the D010 anonymity decision remain human gates.

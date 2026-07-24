@@ -332,3 +332,37 @@ Use dated entries with context, decision, alternatives, and consequences. Do not
   explanation of the probe's signal. The manuscript makes no claim that the
   category structure is what the frontier representation reads; §Limitations
   states this explicitly. Phase axis stays narrowed out.
+
+## D027 — Plain-English manuscript rewrite; "frontier representation" renamed "frontier state"
+
+- **Date:** 2026-07-23
+- **Context:** At the owner's instruction the manuscript was rewritten for
+  readability. Target: Flesch Reading Ease >= 70 (measured, not judged), with
+  every term defined upfront. Baseline was 27.9 (specialist-journal register).
+- **Decision:**
+  1. **Terminology.** The core term "frontier representation" is renamed
+     **"frontier state"** everywhere in `paper/main.tex`. It denotes the same
+     object (phi(t): the target's residual-stream state at the last committed
+     position, layers {6,12,18,24} concatenated, 14,336 dims Qwen / 16,384
+     Llama). "State" is accurate and shorter, and makes no mechanism claim, so
+     it stays clear of the G2 gate (D020). The claims ledger keeps its original
+     "frontier representation" wording for the C10 evidence record; the two are
+     the same object (cross-reference added to the ledger).
+  2. **Register.** Plain professional English, ~11 words/sentence, ~1.46
+     syllables/word. Achieved 73.5 whole-document, every section >= 70.
+  3. **Definitions upfront.** A new glossary section ("Terms used in this
+     paper", `\label{sec:terms}`) defines all 19 terms before any technical
+     section uses them, per the owner's specific request.
+- **Invariants held (mechanically checked, `scripts/check_invariants.py`):** no
+  numeric token dropped from any scientific section (verified per-section: 0
+  dropped / 0 added across all 10 original sections; the 17 whole-document
+  additions are all glossary definitions); scope vocabulary did not shrink
+  (119 -> 160); all labels, refs, figures and bibitems preserved; no affirmative
+  "mechanism"/"circuit" usage. The prior draft is recoverable from git and from
+  the pre-rewrite backup.
+- **Tooling:** `scripts/readability.py` (Flesch scorer) and
+  `scripts/check_invariants.py` (number/hedge/structure/vocabulary gate) are the
+  durable gates, wired as `make -C paper check`. Both report via `textstat`
+  plus an independent implementation so the score does not rest on one library.
+- **Consequence:** The manuscript grew 14 -> 17 pages (plain English uses more
+  words). Science unchanged.

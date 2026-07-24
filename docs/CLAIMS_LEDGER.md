@@ -4,6 +4,12 @@ Allowed statuses: `UNTESTED`, `SUPPORTED`, `PARTIAL`, `REFUTED`, and `RETIRED`.
 
 No claim may move to `SUPPORTED` without experiment identifiers, applicable settings, uncertainty, and known counterexamples. A manuscript claim must be no broader than this record.
 
+> **Terminology (D027, 2026-07-23):** this ledger says "frontier representation";
+> the manuscript (`paper/main.tex`) says "frontier state". They are the same
+> object — phi(t), the target's residual-stream state at the last committed
+> position over layers {6,12,18,24}. The rename is readability-only and makes no
+> mechanism claim (still G2-clean, D020).
+
 | ID | Proposed claim | Status | Required evidence | Experiment IDs | Counterexamples / limits |
 |---|---|---|---|---|---|
 | C01 | Draft hidden states contain acceptance information beyond entropy, margin, history, and domain. | PARTIAL (negative-leaning) | Prompt-grouped incremental comparison on held-out prompts | I10/I12 dev probe, run sweep-2026-07-11T203836 (2026-07-12) | **Not supported for a LINEAR probe on the Qwen pair:** hidden-only AUROC peaks 0.803 (layer 18) vs surface 0.870; hidden⊕surface adds ≤ +0.006 AUROC (layers 18/24 only, not shown significant). Cheap surface signals are a strong, hard-to-beat baseline. Scope: linear probe, 4 layers, 120 dev prompts, 42k tokens. Nonlinear probes / other layers / the Llama pair (I17) untested. See Run log 2026-07-12 |
