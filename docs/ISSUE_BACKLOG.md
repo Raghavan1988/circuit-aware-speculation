@@ -391,3 +391,10 @@ D025; `docs/autoresearch_outcomes.md`, `docs/causal_intervention_report.md`).
 - `paper/.gitignore` fix (`!figures/*.pdf`) committed alongside: `make figures`
   writes into `figures/`, and without the negation any new or renamed figure PDF
   is silently ignored on a fresh clone.
+- **Addendum (same day):** `make figures` was not reproducible — matplotlib
+  stamps a `/CreationDate` into every PDF, so each run rewrote all seven figures
+  with byte-different, content-identical files. That made `git status` unable to
+  answer "did the figures actually change?". `scripts/make_figures.py` now saves
+  with `metadata={"CreationDate": None}`; verified byte-identical across two
+  consecutive runs. The one-time rewrite of the seven tracked PDFs is the
+  timestamp removal only (confirmed: identical after stripping `/CreationDate`).

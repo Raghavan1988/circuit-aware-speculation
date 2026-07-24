@@ -78,6 +78,21 @@ plt.rcParams.update({
 })
 
 
+def save(fig, name: str) -> None:
+    """Write a figure deterministically.
+
+    matplotlib stamps a /CreationDate into every PDF, so re-running this script
+    produces byte-different files with identical content -- which shows up as
+    spurious churn in `git status` and makes "did the figures change?"
+    unanswerable. Suppressing the timestamp makes the output reproducible: same
+    artifacts in, same bytes out.
+    """
+    out = OUTDIR / name
+    fig.savefig(out, metadata={"CreationDate": None})
+    plt.close(fig)
+    print(f"wrote {out}")
+
+
 def load(run: str, name: str) -> dict:
     path = ANALYSIS / run / name
     if not path.exists():
@@ -179,10 +194,7 @@ def fig_atlas() -> None:
     cbar.outline.set_visible(False)
     cbar.ax.tick_params(length=2, labelsize=7)
 
-    out = OUTDIR / "fig_atlas.pdf"
-    fig.savefig(out)
-    plt.close(fig)
-    print(f"wrote {out}")
+    save(fig, "fig_atlas.pdf")
 
 
 # --------------------------------------------------------------------------
@@ -235,10 +247,7 @@ def fig_dose() -> None:
                bbox_to_anchor=(0.5, -0.04))
     fig.tight_layout()
 
-    out = OUTDIR / "fig_dose.pdf"
-    fig.savefig(out)
-    plt.close(fig)
-    print(f"wrote {out}")
+    save(fig, "fig_dose.pdf")
 
 
 # --------------------------------------------------------------------------
@@ -273,10 +282,7 @@ def fig_length() -> None:
     ax.set_xticks([1, 2, 4, 6, 8])
     ax.legend(loc="upper right")
 
-    out = OUTDIR / "fig_length.pdf"
-    fig.savefig(out)
-    plt.close(fig)
-    print(f"wrote {out}")
+    save(fig, "fig_length.pdf")
 
 
 # --------------------------------------------------------------------------
@@ -332,10 +338,7 @@ def fig_forest() -> None:
     ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.22),
               ncol=1)
 
-    out = OUTDIR / "fig_forest.pdf"
-    fig.savefig(out)
-    plt.close(fig)
-    print(f"wrote {out}")
+    save(fig, "fig_forest.pdf")
 
 
 # --------------------------------------------------------------------------
@@ -390,10 +393,7 @@ def fig_calibration() -> None:
     ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.32),
               ncol=2)
 
-    out = OUTDIR / "fig_calibration.pdf"
-    fig.savefig(out)
-    plt.close(fig)
-    print(f"wrote {out}")
+    save(fig, "fig_calibration.pdf")
 
 
 # --------------------------------------------------------------------------
@@ -445,10 +445,7 @@ def fig_regret() -> None:
                          label=l) for (l, _), c, m in zip(SETTINGS, colors, markers)]
     ax.legend(handles=series, loc="upper left")
 
-    out = OUTDIR / "fig_regret.pdf"
-    fig.savefig(out)
-    plt.close(fig)
-    print(f"wrote {out}")
+    save(fig, "fig_regret.pdf")
 
 
 # --------------------------------------------------------------------------
@@ -504,10 +501,7 @@ def fig_schematic() -> None:
     ax.annotate("", xy=(99, 31.2), xytext=(8, 31.2),
                 arrowprops=dict(arrowstyle="-|>", color=INK_MUTED, linewidth=0.7))
 
-    out = OUTDIR / "fig_schematic.pdf"
-    fig.savefig(out)
-    plt.close(fig)
-    print(f"wrote {out}")
+    save(fig, "fig_schematic.pdf")
 
 
 def main() -> None:
