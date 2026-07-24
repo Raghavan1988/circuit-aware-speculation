@@ -308,3 +308,27 @@ Use dated entries with context, decision, alternatives, and consequences. Do not
   `modal_app.py::intervene`. Numbers land in the 2026-07-22 ledger note; C10 stays
   `UNTESTED` until the frozen predictive test pass; mechanistic language stays
   G2-gated (D020) despite the empirical causal pass.
+
+## D026 — C04 folded into the primary manuscript (no separate companion paper)
+
+- **Date:** 2026-07-23
+- **Context:** The I19 manuscript (`paper/main.tex`, commit 3b7905e, 18:18) was
+  drafted ~3 hours before the C04 atlas chain landed (80ee48b/968c425/b8eb122,
+  21:22–21:29), so C04 had no presence in it. The 2026-07-22 C04 test-pass note
+  in the claims ledger provisionally routed the atlas and contrast tables to a
+  "companion analysis manuscript".
+- **Decision:** C04 goes into the primary manuscript as its own section
+  (`\S\ref{sec:atlas}`, "What acceptance is about: the token-category atlas"),
+  with a contribution bullet, an abstract clause, and its own scope paragraph in
+  Limitations. No separate companion paper is planned. The provisional
+  companion-manuscript wording in the ledger is superseded by this entry.
+- **Rationale:** (a) The primary paper's only positive result otherwise rests on
+  a probe; C04 adds a second frozen-test-passing, pre-registered positive that is
+  purely behavioral. (b) C04 carries no G2 language exposure (D020), so it cannot
+  be destabilized by the pending human decision on mechanism wording. (c) Two
+  thin manuscripts were judged weaker than one, given the atlas alone lacks a
+  systems or causal arc.
+- **Scope guard:** C04 is presented as complementary evidence, NOT as an
+  explanation of the probe's signal. The manuscript makes no claim that the
+  category structure is what the frontier representation reads; §Limitations
+  states this explicitly. Phase axis stays narrowed out.
