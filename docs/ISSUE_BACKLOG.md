@@ -30,6 +30,7 @@ Statuses are `OPEN`, `IN_PROGRESS`, `BLOCKED`, and `DONE`. Before starting, add 
 | I22 | OPEN | — | Reproduce SpecDec++-style learned acceptance-head baseline | I03,I06,I10 | I08,I09 | GPU |
 | I23 | DONE | Claude | Pre-round acceptance prediction from cached representations | I10,I12 | I13,I14 | GPU |
 | I24 | OPEN | — | Staged release package (benchmark, recipes, integration adapter) | I18,I20 | — | GPU/CPU |
+| I25 | OPEN | — | EAGLE-3 draft: specialization revival + pre-round-signal transfer (separate line, D028) | I13,I15,I23 | — | A100/H100 |
 
 ## Build status (2026-07-10, Claude)
 
@@ -290,6 +291,38 @@ D025; `docs/autoresearch_outcomes.md`, `docs/causal_intervention_report.md`).
 - Predict next-round acceptance and accepted length from already-cached verified-context representations at selected layers, before any draft compute is spent.
 - Compare marginal deployed cost and prediction quality against post-draft signals (entropy, margin, the I22 head); report offline value and deployed-path cost separately.
 - Freeze feature and layer choice on development data; outcomes update C10.
+
+### I25 — EAGLE-3 draft line (separate track, per D028)
+
+Separate, manuscript-firewalled line of work. **No artifact, number, or claim
+from this issue may enter `paper/main.tex` or revise claims C01–C11** (D028).
+Work on a dedicated branch; results land under `/artifacts/eagle3/` and new
+claim IDs C12+.
+
+- Add a public, pinned EAGLE-3 head for the ungated Qwen2.5-7B target (Llama
+  target only if the HF token is refreshed; record the decision if the Llama
+  pair is skipped). Pin the speculator dependency in a new image variant only —
+  do not modify the sealed capture/timing images.
+- Re-verify greedy exact-match token-identity for the EAGLE-3 drafter against
+  target-only decoding before any EAGLE-3 number is treated as scientific
+  (D014). First pass runs EAGLE-3 as a **chain drafter under greedy
+  exact-match**; native tree/multi-branch verification is a deviation requiring
+  its own dated DECISIONS entry.
+- **Q1 (specialization):** on the sealed multi-domain corpus, measure whether an
+  EAGLE-3 draft makes an oracle domain router non-trivial — i.e. whether the
+  per-domain best draft ever differs — revisiting the RQ3 no-go. Report the
+  oracle-router headroom over the single-best draft, per domain, with paired
+  uncertainty.
+- **Q2 (pre-round-signal transfer):** re-run the frozen frontier-state acceptance
+  probe (C10 method) against EAGLE-3 acceptance labels. Does the pre-round signal
+  still predict acceptance, and does it add information beyond the trained
+  speculator's own confidence? Freeze features/layers on development data;
+  outcomes open C12, not C10.
+- **Q3 (contemporary baseline):** report EAGLE-3 end-to-end latency under the same
+  overhead-inclusive, device-synchronized timing rules as every other policy, as
+  the modern-speculator baseline for G4/G5.
+- Freeze all dev choices before the frozen test; log negative and contradictory
+  results in `docs/CLAIMS_LEDGER.md` under the C12+ namespace.
 
 ### I24 — Release package (staged per D010)
 
