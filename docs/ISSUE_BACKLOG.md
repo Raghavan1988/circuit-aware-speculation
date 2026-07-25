@@ -30,7 +30,7 @@ Statuses are `OPEN`, `IN_PROGRESS`, `BLOCKED`, and `DONE`. Before starting, add 
 | I22 | OPEN | — | Reproduce SpecDec++-style learned acceptance-head baseline | I03,I06,I10 | I08,I09 | GPU |
 | I23 | DONE | Claude | Pre-round acceptance prediction from cached representations | I10,I12 | I13,I14 | GPU |
 | I24 | OPEN | — | Staged release package (benchmark, recipes, integration adapter) | I18,I20 | — | GPU/CPU |
-| I25 | OPEN | — | EAGLE-3 draft: specialization revival + pre-round-signal transfer (separate line, D028) | I13,I15,I23 | — | A100/H100 |
+| I25 | OPEN | — | EAGLE-3 line: pre-round-signal transfer + fused-feature analysis (separate track, D028/D029) | I13,I15,I23 | — | A100/H100 |
 
 ## Build status (2026-07-10, Claude)
 
@@ -292,37 +292,59 @@ D025; `docs/autoresearch_outcomes.md`, `docs/causal_intervention_report.md`).
 - Compare marginal deployed cost and prediction quality against post-draft signals (entropy, margin, the I22 head); report offline value and deployed-path cost separately.
 - Freeze feature and layer choice on development data; outcomes update C10.
 
-### I25 — EAGLE-3 draft line (separate track, per D028)
+### I25 — EAGLE-3 line: pre-round-signal transfer + fused-feature analysis (separate track, per D028/D029)
 
 Separate, manuscript-firewalled line of work. **No artifact, number, or claim
 from this issue may enter `paper/main.tex` or revise claims C01–C11** (D028).
 Work on a dedicated branch; results land under `/artifacts/eagle3/` and new
 claim IDs C12+.
 
-- Add a public, pinned EAGLE-3 head for the ungated Qwen2.5-7B target (Llama
-  target only if the HF token is refreshed; record the decision if the Llama
-  pair is skipped). Pin the speculator dependency in a new image variant only —
-  do not modify the sealed capture/timing images.
+Verified sources (D029; `docs/landscape.md`): EAGLE-3 = `arXiv:2503.01840`, repo
+`github.com/SafeAILab/EAGLE`, heads under HF `yuhuili`. Head = one decoder layer
+reusing the frozen target embedding + LM head, input = fused low/mid/high target
+layers, direct-token "training-time test" objective.
+
+**Setup**
+- Use the community text-only head `ruipeterpan/Qwen2.5-7B-Instruct_EAGLE3_UltraChat`
+  (primary; disclosed third-party artifact — SpecForge/UltraChat-200K, not
+  paper-benchmarked), pinned by revision. Paper-grade fallback:
+  `yuhuili/EAGLE3-LLaMA3.1-Instruct-8B` (official) if the Llama target is
+  Llama-3.1-8B-Instruct and the HF token is refreshed. Train our own only as a
+  last resort (D028 Path B). Pin the speculator dependency in a NEW image variant
+  only — do not modify the sealed capture/timing images.
+- Confirm the head's expected fused layer indices and match capture to them
+  (our `capture_frontier_activations` already dumps multi-layer target states).
 - Re-verify greedy exact-match token-identity for the EAGLE-3 drafter against
-  target-only decoding before any EAGLE-3 number is treated as scientific
-  (D014). First pass runs EAGLE-3 as a **chain drafter under greedy
+  target-only decoding before any EAGLE-3 number is treated as scientific (D014;
+  holds by construction since verification uses the target argmax — this is a
+  sanity assertion). First pass runs EAGLE-3 as a **chain drafter under greedy
   exact-match**; native tree/multi-branch verification is a deviation requiring
   its own dated DECISIONS entry.
-- **Q1 (specialization):** on the sealed multi-domain corpus, measure whether an
-  EAGLE-3 draft makes an oracle domain router non-trivial — i.e. whether the
-  per-domain best draft ever differs — revisiting the RQ3 no-go. Report the
-  oracle-router headroom over the single-best draft, per domain, with paired
-  uncertainty.
-- **Q2 (pre-round-signal transfer):** re-run the frozen frontier-state acceptance
-  probe (C10 method) against EAGLE-3 acceptance labels. Does the pre-round signal
-  still predict acceptance, and does it add information beyond the trained
-  speculator's own confidence? Freeze features/layers on development data;
-  outcomes open C12, not C10.
-- **Q3 (contemporary baseline):** report EAGLE-3 end-to-end latency under the same
-  overhead-inclusive, device-synchronized timing rules as every other policy, as
-  the modern-speculator baseline for G4/G5.
-- Freeze all dev choices before the frozen test; log negative and contradictory
-  results in `docs/CLAIMS_LEDGER.md` under the C12+ namespace.
+
+**Questions — headline is Q2/Q3 (novel); Q1 is demoted (pre-empted by TAPS)**
+- **Q2 (HEADLINE — pre-round-signal transfer, NOVEL per D029):** re-run the frozen
+  frontier-state acceptance probe (C10 method) against EAGLE-3 acceptance labels.
+  Does the target-side, pre-round signal still predict acceptance, and — the new
+  part — does it add information **beyond the EAGLE drafter's own confidence**
+  (its draft-head token probability / EAGLE-2 tree-confidence)? Freeze
+  features/layers on development data; outcomes open C12, not C10.
+- **Q3 (HEADLINE — fused-feature analysis, NOVEL per D029):** probe what EAGLE-3's
+  fused low/mid/high target features encode about acceptance (the EAGLE-3 paper
+  describes them only qualitatively: low=syntax, mid=relations, high=semantics —
+  no probing/causal analysis). Connect to the C04 category atlas: is per-category
+  acceptance structure readable from the fused features? Opens C13.
+- **Q1 (DEMOTED — specialization, PRE-EMPTED by TAPS `arXiv:2603.27027`):** TAPS
+  already trains per-domain EAGLE drafters, shows specialization, and routes by
+  confidence. Run only as a **controlled replication/confirmation** of TAPS on
+  our sealed corpus (oracle-router headroom per domain), cited directly — NOT a
+  headline claim. **Read the TAPS PDF + released code in full before any compute
+  commit** (the novelty sweep read abstract/HTML only) to fix how much survives.
+- Optional systems note: EAGLE-3 end-to-end latency under the same
+  overhead-inclusive, device-synchronized timing rules, as a contemporary
+  baseline for G4/G5.
+
+Freeze all dev choices before the frozen test; log negative and contradictory
+results in `docs/CLAIMS_LEDGER.md` under the C12+ namespace.
 
 ### I24 — Release package (staged per D010)
 
