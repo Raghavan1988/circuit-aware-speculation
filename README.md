@@ -87,6 +87,7 @@ make -C paper figures   # regenerate paper/figures/*.pdf from sealed artifacts
 make -C paper artifacts # pull those artifacts from the Modal volume first
 make -C paper check     # prose gates: readability score + claim invariants
 ```
+file name generated would be main.pdf
 
 Figure PDFs are tracked, so a plain `make -C paper` works on a fresh clone with
 no Modal access. `figures` and `artifacts` are only needed when the underlying
