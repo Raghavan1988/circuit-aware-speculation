@@ -429,3 +429,50 @@ Use dated entries with context, decision, alternatives, and consequences. Do not
   head is the default entry point. No change to any file under `paper/`. D003's
   deferral is superseded for EAGLE-3 only; multi-draft routing beyond this
   specialization test remains out of core scope.
+
+## D029 — I25 reframed after verified source + novelty sweep (Q1 pre-empted; Q2/Q3 headline)
+
+- **Date:** 2026-07-24
+- **Context:** Two verification sweeps (background agents, 2026-07-24) settled the
+  two open unknowns behind D028. Primary sources confirmed: EAGLE-1
+  `arXiv:2401.15077`, EAGLE-2 `2406.16858`, EAGLE-3 `2503.01840`, official repo
+  `github.com/SafeAILab/EAGLE`, checkpoints under HF user `yuhuili`. EAGLE-3
+  technical shape confirmed (drops feature-regression loss for a direct-token
+  "training-time test" objective; fuses 3 target layers low/mid/high; head = one
+  decoder layer reusing the frozen embedding + LM head). Both findings recorded
+  in `docs/landscape.md`.
+- **Decision:**
+  1. **Checkpoint path (resolves D028's Path A/B fork):** NO official
+     Qwen2.5-7B-Instruct EAGLE-3 head exists (official Qwen head is EAGLE-1 on
+     Qwen2 only). Two community text-only Qwen2.5-7B-Instruct EAGLE-3 heads do
+     exist — `ruipeterpan/Qwen2.5-7B-Instruct_EAGLE3_UltraChat` (primary; better
+     documented, SGLang/vLLM versions pinned, ~2.06x reported) and
+     `thoughtworks/Qwen2.5-7B-Instruct-Eagle3`. **Path A proceeds on the
+     ruipeterpan head, treated as a disclosed third-party artifact** (provenance:
+     SpecForge, UltraChat-200K; not paper-benchmarked). Paper-grade fallback if a
+     reviewer demands an official head: `yuhuili/EAGLE3-LLaMA3.1-Instruct-8B`
+     (official) IF the Llama replication target is Llama-3.1-8B-Instruct and the
+     HF token is refreshed. Training our own (D028 Path B) stays the last resort;
+     it is cheap (one small layer, a few GPU-days on 4-8 GPUs, ShareGPT+UltraChat
+     ~532K) but only worth it for full training-distribution control.
+  2. **Scope reframe (novelty):** the sweep found **Q1 (trained drafts revive
+     domain specialization / non-trivial routing) is PRE-EMPTED** by **TAPS,
+     `arXiv:2603.27027`** — TAPS trains per-domain EAGLE-2/HASS drafters, shows
+     domain specialization, routes among them by confidence, and independently
+     reports "confidence beats entropy" as the routing signal. Q1 is therefore
+     demoted from a headline to, at most, a **controlled replication/confirmation
+     of TAPS**, cited directly. **Q2 (target-side pre-round probe tested against
+     an EAGLE drafter's own confidence)** and **Q3 (what EAGLE-3's fused
+     multi-layer target features encode about acceptance)** survive as **NOVEL**
+     and become the I25 headline — both build on this repo's own assets (the C10
+     probe and the C04 atlas), not on EAGLE.
+- **Alternatives:** keep Q1 as a headline (rejected: pre-empted by TAPS at the
+  phenomenon level); block I25 on training an official-grade Qwen head (rejected:
+  a disclosed community head answers Q2/Q3 without the training cost); switch the
+  whole line to the official Llama head now (rejected: Qwen is the ungated primary
+  and keeps continuity with the sealed pre-round capture).
+- **Consequences:** I25 acceptance criteria rewritten to lead with Q2/Q3 and cite
+  TAPS on Q1; `docs/landscape.md` gains EAGLE-3 and TAPS rows. Before any I25
+  compute commit, the TAPS PDF + released code must be read in full (agent read
+  abstract/HTML only) to fix exactly how much of Q1 survives as replication.
+  Still no change to any file under `paper/`; new claims remain C12+.
