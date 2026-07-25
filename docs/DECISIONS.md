@@ -366,3 +366,66 @@ Use dated entries with context, decision, alternatives, and consequences. Do not
   plus an independent implementation so the score does not rest on one library.
 - **Consequence:** The manuscript grew 14 -> 17 pages (plain English uses more
   words). Science unchanged.
+
+## D028 — EAGLE-3 opened as a separate, manuscript-firewalled line of work
+
+- **Date:** 2026-07-24
+- **Context:** D003 deferred multi-draft routing and EAGLE-3 "until the core
+  acceptance study meets its evidence gate." That precondition is now met: the
+  pre-round frontier-state signal passed the frozen predictive test (C10 ->
+  SUPPORTED, G1 positive), the causal interventions replicated on two families
+  (I15, empirical G2), and the category atlas passed its frozen test (C04 ->
+  SUPPORTED). D009 already names "transfer to a modern speculator family" as the
+  Track B extension. The specific open question, from the owner's own framing:
+  routing/specialization was recorded as a no-go (RQ3) using off-the-shelf Qwen
+  drafts, but an EAGLE-3 draft is trained on the target's own features to mimic
+  it — exactly what greedy exact-match acceptance rewards — so a target-feature
+  drafter could revive specialization in a way an off-the-shelf 0.5B draft
+  cannot. This must be tested before "specialization is dead" is a durable claim.
+- **Decision:** Open EAGLE-3 as a **new, separate line of work** (backlog I25),
+  un-deferring it from D003 now that D003's gate condition holds. It is run as an
+  **isolated track that does not touch the current manuscript or its evidence
+  set**:
+  1. **Manuscript firewall.** `paper/` is frozen with respect to this line. No
+     EAGLE-3 result, figure, table, or citation enters `paper/main.tex`, and no
+     EAGLE-3 finding revises any existing claim (C01–C11) as recorded in
+     `docs/CLAIMS_LEDGER.md`. The C10/C04/I15 story stands or falls on the
+     off-the-shelf Qwen/Llama evidence already sealed. If EAGLE-3 later earns a
+     manuscript, it is a *separate* write-up (parallel to the D026 reasoning that
+     one self-contained story beats a diluted one).
+  2. **Separate evidence namespace.** New claims from this line are numbered
+     C12+ and are opened in the ledger only when EAGLE-3 evidence lands; they are
+     never retrofitted onto C01–C11. Artifacts live under their own run-id
+     namespace (e.g. `/artifacts/eagle3/`), leaving the sealed v1/v2 corpora and
+     every existing analysis untouched.
+  3. **Code isolation.** Work proceeds on a dedicated branch so `main`'s
+     manuscript build (`make -C paper`) stays reproducible and green throughout.
+     The speculator dependency is added only to a new pinned image variant, not
+     to the capture/timing images the sealed results depend on.
+  4. **Protocol carried forward, deviations recorded.** Greedy exact-match
+     token-identity (D014) is re-verified for the EAGLE-3 drafter before any
+     EAGLE-3 number is called scientific. EAGLE-3's native tree/multi-branch
+     verification is a deviation from the chain engine; the first pass scopes
+     EAGLE-3 to a **chain drafter under greedy exact-match** for apples-to-apples
+     comparison, and tree verification, if pursued, gets its own dated entry.
+     Timing rules (overhead-inclusive, device-synchronized) and prompt-grouped
+     splits are unchanged.
+  5. **Scientific questions (dev-first, frozen-test-gated like the core):**
+     (a) does an EAGLE-3 draft revive domain specialization / make an oracle
+     router non-trivial, revisiting the RQ3 no-go; (b) does the pre-round
+     frontier-state acceptance signal (C10) still hold, and does it transfer to
+     or interact with a trained speculator (the D009 Track B extension); (c) how
+     does EAGLE-3 sit as a contemporary baseline for G4/G5.
+- **Alternatives:** Fold EAGLE-3 into the current manuscript (rejected: destabilizes
+  a frozen, gate-passing story on a high-variance new result, and the owner
+  directed no manuscript impact); keep EAGLE-3 deferred (rejected: its gate
+  precondition is now met and it is the one open experiment that can change the
+  specialization conclusion); run it on `main` against the sealed artifacts
+  (rejected: risks contaminating the sealed corpora/images the manuscript rests on).
+- **Consequences:** New backlog issue I25 (OPEN), depends on I17-style replication
+  scaffolding and the sealed pre-round capture; compute is A100/H100. The Llama
+  replication token caveat (CLAUDE.md environment facts) applies if an EAGLE head
+  for a gated target is used; the ungated Qwen2.5-7B pair with a public EAGLE-3
+  head is the default entry point. No change to any file under `paper/`. D003's
+  deferral is superseded for EAGLE-3 only; multi-draft routing beyond this
+  specialization test remains out of core scope.
