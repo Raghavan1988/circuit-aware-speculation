@@ -1,24 +1,6 @@
 """Gate a manuscript rewrite against the science it is allowed to change: none.
 
-A readability rewrite is supposed to change wording only. The failure mode that
-matters is not an awkward sentence -- it is a dropped hedge or a rounded number
-turning a scoped claim into a broader one. The paper carries 419 numeric tokens
-and heavy qualification ("only", "not", "narrow", "descriptive"), and
-simplifying prose is exactly the operation that sheds them.
 
-This script compares a candidate `main.tex` against a reference revision and
-fails on any of:
-
-  * a numeric token added, dropped, or altered (multiset equality)
-  * a drop in scope/hedge vocabulary
-  * a lost \\label, \\ref, or \\includegraphics target
-  * banned vocabulary: "mechanism"/"circuit" are gated by G2 (D020)
-
-Usage::
-
-    python scripts/check_invariants.py                     # HEAD vs working tree
-    python scripts/check_invariants.py --ref HEAD~3
-    python scripts/check_invariants.py --old a.tex --new b.tex
 """
 
 from __future__ import annotations
