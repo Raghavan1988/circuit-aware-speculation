@@ -1,3 +1,5 @@
+# Purpose: define the Modal environment and entrypoints used to run and validate
+# the circuit-aware-speculation experiment harness.
 """Modal entrypoints for the circuit-aware-speculation harness (issue I01).
 
 Phase 1 (custom-harness science) runs entirely here. Phase 2 (serving-engine
