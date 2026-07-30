@@ -26,7 +26,7 @@ Usage:
         --spec-json '{"name":"raw_L18","family":"raw","layers":[18],"params":{}}' \
         --out /artifacts/analysis/autoresearch/raw_L18.json
 
-    # or evaluate the whole default seed library:
+    #
     PYTHONPATH=src python scripts/fit_autoresearch.py --run <run_id> --eval dev --all
 """
 from __future__ import annotations
