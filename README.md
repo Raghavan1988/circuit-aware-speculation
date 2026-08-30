@@ -1,3 +1,6 @@
+Update: Based on guidance from Vizuara folks, i will upload a record to arXiv
+
+
 # Circuit-Aware Speculation
 
 **Working title:** *Circuit-Aware Speculation: Mechanistic Signals for Compute-Optimal Speculative Decoding*
