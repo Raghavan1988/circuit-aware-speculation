@@ -1,6 +1,12 @@
-"""Gate a manuscript rewrite against the science it is allowed to change: none.
+"""Verify that a manuscript rewrite preserves the underlying science.
 
+The rewrite may improve wording and presentation, but it must not:
 
+- remove scientific numbers,
+- introduce unexplained numbers,
+- systematically remove caveats/hedges,
+- lose LaTeX structural anchors, or
+- make affirmative mechanistic claims.
 """
 
 from __future__ import annotations
@@ -12,171 +18,385 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+
+# -----------------------------------------------------------------------------
+# Configuration
+# -----------------------------------------------------------------------------
+
 REPO = Path(__file__).resolve().parent.parent
 TEX = "paper/main.tex"
 
-# Words that keep a claim inside what the evidence supports. Losing them is how
-# a rewrite silently overstates the science.
-HEDGES = ["only", "not", "no", "never", "narrow", "narrowed", "scope",
-          "scoped", "sensitivity", "descriptive", "descriptively", "caveat",
-          "fails", "fail", "cannot", "untested", "open", "null", "unmeasured",
-          "limitation", "limited", "expected-null", "does not", "did not",
-          "we make no", "rather than"]
+# Words that tend to keep claims within the scope supported by the evidence.
+HEDGES = [
+    "only",
+    "not",
+    "no",
+    "never",
+    "narrow",
+    "narrowed",
+    "scope",
+    "scoped",
+    "sensitivity",
+    "descriptive",
+    "descriptively",
+    "caveat",
+    "fails",
+    "fail",
+    "cannot",
+    "untested",
+    "open",
+    "null",
+    "unmeasured",
+    "limitation",
+    "limited",
+    "expected-null",
+    "does not",
+    "did not",
+    "we make no",
+    "rather than",
+]
 
-BANNED = ["mechanism", "mechanistic", "circuit", "circuits"]
+BANNED = [
+    "mechanism",
+    "mechanistic",
+    "circuit",
+    "circuits",
+]
 
 NUM_RE = re.compile(r"[-+]?\d[\d,]*\.?\d*")
 
 
-def body_of(src: str) -> str:
-    if r"\begin{document}" in src:
-        src = src.split(r"\begin{document}", 1)[1]
-    return src.split(r"\end{document}", 1)[0]
+# -----------------------------------------------------------------------------
+# Manuscript parsing
+# -----------------------------------------------------------------------------
+
+def body_of(source: str) -> str:
+    """Return only the contents of the LaTeX document body."""
+    if r"\begin{document}" in source:
+        source = source.split(r"\begin{document}", 1)[1]
+
+    return source.split(r"\end{document}", 1)[0]
 
 
-def numbers(src: str) -> Counter:
-    """Numeric tokens, normalised so 1,000 and 1000 compare equal.
+def numbers(source: str) -> Counter:
+    """Count numeric tokens in the document body.
 
-    LaTeX writes a thin comma as ``14{,}336``; without collapsing it the regex
-    would split that into ``14`` and ``336``, so normalise it to a plain comma
-    (which is then stripped) before counting -- the reader sees one number.
+    Numbers are normalized so equivalent forms compare equally:
+
+        1,000     -> 1000
+        14{,}336  -> 14336
+
+    LaTeX sometimes writes commas as ``{,}``. We first turn those into normal
+    commas, then remove commas from all numeric tokens before counting them.
     """
-    body = body_of(src).replace("{,}", ",")
-    return Counter(n.replace(",", "") for n in NUM_RE.findall(body))
+    body = body_of(source).replace("{,}", ",")
+
+    return Counter(
+        number.replace(",", "")
+        for number in NUM_RE.findall(body)
+    )
 
 
-def hedges(src: str) -> Counter:
-    text = body_of(src).lower()
-    return Counter({h: len(re.findall(rf"\b{re.escape(h)}\b", text))
-                    for h in HEDGES})
+def hedges(source: str) -> Counter:
+    """Count occurrences of scope/caveat vocabulary."""
+    text = body_of(source).lower()
+
+    return Counter({
+        hedge: len(re.findall(rf"\b{re.escape(hedge)}\b", text))
+        for hedge in HEDGES
+    })
 
 
-def anchors(src: str) -> dict[str, set]:
-    b = body_of(src)
+def anchors(source: str) -> dict[str, set]:
+    """Collect structural LaTeX anchors that should survive a rewrite."""
+    body = body_of(source)
+
     return {
-        "label": set(re.findall(r"\\label\{([^}]*)\}", b)),
-        "ref": set(re.findall(r"\\ref\{([^}]*)\}", b)),
-        "graphic": set(re.findall(r"\\includegraphics\[[^]]*\]\{([^}]*)\}", b)),
-        "bibitem": set(re.findall(r"\\bibitem\{([^}]*)\}", b)),
+        "label": set(re.findall(r"\\label\{([^}]*)\}", body)),
+        "ref": set(re.findall(r"\\ref\{([^}]*)\}", body)),
+        "graphic": set(
+            re.findall(r"\\includegraphics\[[^]]*\]\{([^}]*)\}", body)
+        ),
+        "bibitem": set(re.findall(r"\\bibitem\{([^}]*)\}", body)),
     }
 
 
-def read_ref(ref: str, path: str) -> str:
-    out = subprocess.run(["git", "show", f"{ref}:{path}"], cwd=REPO,
-                         capture_output=True, text=True)
-    if out.returncode:
-        sys.exit(f"cannot read {ref}:{path}\n{out.stderr}")
-    return out.stdout
+# -----------------------------------------------------------------------------
+# Input loading
+# -----------------------------------------------------------------------------
 
+def read_ref(ref: str, path: str) -> str:
+    """Read a file from a Git revision."""
+    result = subprocess.run(
+        ["git", "show", f"{ref}:{path}"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+    )
+
+    if result.returncode:
+        sys.exit(f"cannot read {ref}:{path}\n{result.stderr}")
+
+    return result.stdout
+
+
+# -----------------------------------------------------------------------------
+# Main validation
+# -----------------------------------------------------------------------------
 
 def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--ref", default="HEAD", help="git revision to compare against")
-    ap.add_argument("--old", help="explicit old file (overrides --ref)")
-    ap.add_argument("--new", default=str(REPO / TEX))
-    ap.add_argument("--new-content", nargs="*", default=[],
-                    help="files of legitimately-new prose (e.g. a glossary); "
-                         "numbers they introduce are allowed to be added")
-    args = ap.parse_args()
+    parser = argparse.ArgumentParser()
 
-    old = Path(args.old).read_text() if args.old else read_ref(args.ref, TEX)
+    parser.add_argument(
+        "--ref",
+        default="HEAD",
+        help="git revision to compare against",
+    )
+    parser.add_argument(
+        "--old",
+        help="explicit old file (overrides --ref)",
+    )
+    parser.add_argument(
+        "--new",
+        default=str(REPO / TEX),
+    )
+    parser.add_argument(
+        "--new-content",
+        nargs="*",
+        default=[],
+        help=(
+            "files of legitimately-new prose (e.g. a glossary); "
+            "numbers they introduce are allowed to be added"
+        ),
+    )
+
+    args = parser.parse_args()
+
+    # Load reference and candidate manuscripts.
+    if args.old:
+        old = Path(args.old).read_text()
+    else:
+        old = read_ref(args.ref, TEX)
+
     new = Path(args.new).read_text()
-    allowed_add = Counter()
-    for f in args.new_content:
-        allowed_add += numbers(Path(f).read_text())
+
+    # Numbers appearing in explicitly declared new content are allowed additions.
+    allowed_additions = Counter()
+    for path in args.new_content:
+        allowed_additions += numbers(Path(path).read_text())
 
     failures: list[str] = []
 
-    # --- numbers -----------------------------------------------------------
-    # A DROPPED number is a real loss of science and always fails. An ADDED
-    # number is only a problem if it is not accounted for by explicitly-declared
-    # new content (a glossary re-stating dimensions, an AUROC scale of 0.5-1.0,
-    # and so on). Unexplained additions still fail -- that is how a fabricated
-    # statistic would be caught.
-    o, n = numbers(old), numbers(new)
-    # A reduced occurrence count is only a real loss if the number is ELIMINATED
-    # from the paper (count reaches zero). Removing a duplicate mention -- e.g.
-    # an abstract that stops repeating a figure already stated in the body -- is
-    # legitimate tightening, so flag it as a note, not a failure.
-    reduced = o - n
-    eliminated = {v: c for v, c in reduced.items() if n[v] == 0}
-    deduped = {v: c for v, c in reduced.items() if n[v] > 0}
-    added = (n - o) - allowed_add
-    explained = (n - o) - added
-    print(f"numbers: {sum(o.values())} reference / {sum(n.values())} candidate"
-          f"  ({sum(explained.values())} additions explained by new content)")
-    for v, c in sorted(eliminated.items()):
-        failures.append(f"NUMBER ELIMINATED (gone from paper)  {v!r} x{c}")
-    for v, c in sorted(added.items()):
-        failures.append(f"NUMBER ADDED (unexplained)  {v!r} x{c}")
-    for v, c in sorted(deduped.items()):
-        print(f"  note: {v!r} mentioned {c} fewer time(s) but still in the "
-              f"paper ({n[v]}x) -- de-duplication, not a loss")
+    # -------------------------------------------------------------------------
+    # 1. Numbers
+    # -------------------------------------------------------------------------
+    #
+    # Removing a number completely is treated as loss of scientific content.
+    #
+    # Adding a number is allowed only if it comes from explicitly declared
+    # new content. This prevents a rewrite from silently inventing statistics.
+    #
+    # Removing duplicate mentions is allowed. For example, a number may disappear
+    # from the abstract while remaining in the results section.
+    # -------------------------------------------------------------------------
+
+    old_numbers = numbers(old)
+    new_numbers = numbers(new)
+
+    reduced = old_numbers - new_numbers
+
+    eliminated = {
+        value: count
+        for value, count in reduced.items()
+        if new_numbers[value] == 0
+    }
+
+    deduped = {
+        value: count
+        for value, count in reduced.items()
+        if new_numbers[value] > 0
+    }
+
+    added = (new_numbers - old_numbers) - allowed_additions
+    explained = (new_numbers - old_numbers) - added
+
+    print(
+        f"numbers: {sum(old_numbers.values())} reference / "
+        f"{sum(new_numbers.values())} candidate"
+        f"  ({sum(explained.values())} additions explained by new content)"
+    )
+
+    for value, count in sorted(eliminated.items()):
+        failures.append(
+            f"NUMBER ELIMINATED (gone from paper)  {value!r} x{count}"
+        )
+
+    for value, count in sorted(added.items()):
+        failures.append(
+            f"NUMBER ADDED (unexplained)  {value!r} x{count}"
+        )
+
+    for value, count in sorted(deduped.items()):
+        print(
+            f"  note: {value!r} mentioned {count} fewer time(s) but still in "
+            f"the paper ({new_numbers[value]}x) -- de-duplication, not a loss"
+        )
+
     if not eliminated and not added:
         print("  ok - no number eliminated; all additions explained")
 
-    # --- hedges ------------------------------------------------------------
-    # Counting cannot catch a single dropped "only" through a full rewrite --
-    # legitimate rewording moves these words around constantly. What it CAN
-    # catch is systematic shedding, so the aggregate is the gate and individual
-    # moves are notes. Semantic claim drift is checked adversarially by
-    # reviewers reading old and new side by side; this script does not
-    # substitute for that.
-    oh, nh = hedges(old), hedges(new)
-    total_o, total_n = sum(oh.values()), sum(nh.values())
-    regressions = {h: (oh[h], nh[h]) for h in HEDGES if nh[h] < oh[h]}
-    print(f"hedges: {total_o} reference / {total_n} candidate")
-    if total_o and total_n < total_o * 0.90:
-        failures.append(
-            f"HEDGE SHEDDING: total scope vocabulary fell {total_o} -> "
-            f"{total_n} ({100 * (1 - total_n / total_o):.0f}% drop, limit 10%)")
-    # Individual hedge moves are NOTES, never failures: rewording legitimately
-    # replaces "scoped to" with "is narrow", "unmeasured" with "did not
-    # measure", "rather than eliminated" with "we do not remove it". Counting
-    # cannot tell that drift apart from real loss -- the adversarial review
-    # does. The only hedge gate is aggregate shedding (above).
-    if regressions:
-        for h, (a, b) in sorted(regressions.items()):
-            print(f"  note: hedge word {h!r} reduced {a} -> {b} "
-                  f"(verify the caveat survived under other words)")
-    if total_n >= total_o:
-        print(f"  ok - scope vocabulary did not shrink overall "
-              f"({total_o} -> {total_n})")
+    # -------------------------------------------------------------------------
+    # 2. Hedges and caveats
+    # -------------------------------------------------------------------------
+    #
+    # Individual words are allowed to move or be replaced during rewriting.
+    # For example:
+    #
+    #   "scoped to"       -> "is narrow"
+    #   "unmeasured"      -> "did not measure"
+    #   "rather than..."  -> "we do not..."
+    #
+    # Therefore individual reductions are only notes.
+    #
+    # The actual gate looks for systematic hedge shedding: total hedge vocabulary
+    # may not fall by more than 10%.
+    #
+    # This is only a coarse automated check. Reviewers must still compare the old
+    # and new manuscripts for semantic claim drift.
+    # -------------------------------------------------------------------------
 
-    # --- structural anchors -----------------------------------------------
-    oa, na = anchors(old), anchors(new)
-    for kind in oa:
-        lost = oa[kind] - na[kind]
+    old_hedges = hedges(old)
+    new_hedges = hedges(new)
+
+    old_hedge_total = sum(old_hedges.values())
+    new_hedge_total = sum(new_hedges.values())
+
+    regressions = {
+        hedge: (old_hedges[hedge], new_hedges[hedge])
+        for hedge in HEDGES
+        if new_hedges[hedge] < old_hedges[hedge]
+    }
+
+    print(
+        f"hedges: {old_hedge_total} reference / "
+        f"{new_hedge_total} candidate"
+    )
+
+    if (
+        old_hedge_total
+        and new_hedge_total < old_hedge_total * 0.90
+    ):
+        failures.append(
+            f"HEDGE SHEDDING: total scope vocabulary fell "
+            f"{old_hedge_total} -> {new_hedge_total} "
+            f"({100 * (1 - new_hedge_total / old_hedge_total):.0f}% drop, "
+            f"limit 10%)"
+        )
+
+    for hedge, (before, after) in sorted(regressions.items()):
+        print(
+            f"  note: hedge word {hedge!r} reduced {before} -> {after} "
+            f"(verify the caveat survived under other words)"
+        )
+
+    if new_hedge_total >= old_hedge_total:
+        print(
+            f"  ok - scope vocabulary did not shrink overall "
+            f"({old_hedge_total} -> {new_hedge_total})"
+        )
+
+    # -------------------------------------------------------------------------
+    # 3. Structural anchors
+    # -------------------------------------------------------------------------
+
+    old_anchors = anchors(old)
+    new_anchors = anchors(new)
+
+    for kind in old_anchors:
+        lost = old_anchors[kind] - new_anchors[kind]
+
         if lost:
-            failures.append(f"{kind.upper()} LOST: {sorted(lost)}")
-    if not any(oa[k] - na[k] for k in oa):
+            failures.append(
+                f"{kind.upper()} LOST: {sorted(lost)}"
+            )
+
+    if not any(
+        old_anchors[kind] - new_anchors[kind]
+        for kind in old_anchors
+    ):
         print("  ok - all labels, refs, graphics and bibitems present")
 
-    # --- banned vocabulary -------------------------------------------------
-    # G2 (D020) bars *claiming* a mechanism, not the word appearing in a
-    # disclaimer -- "not a mechanistic account" is the policy being honoured.
-    # Affirmative uses fail; negated ones are reported and allowed.
-    low = body_of(new).lower()
-    negations = ["not ", "no ", "never ", "without ", "rather than ",
-                 "makes no ", "make no ", "avoid ", "nor "]
-    for w in BANNED:
-        for m in re.finditer(rf"\b{w}\b", low):
-            window = low[max(0, m.start() - 70):m.start()]
-            if any(neg in window for neg in negations):
-                print(f"  note: {w!r} used in a disclaimer (allowed): "
-                      f"...{low[max(0, m.start() - 40):m.end() + 10].strip()}...")
+    # -------------------------------------------------------------------------
+    # 4. Banned mechanistic vocabulary
+    # -------------------------------------------------------------------------
+    #
+    # G2 / D020 prohibits *claiming* a mechanism.
+    #
+    # The words themselves are still allowed in explicit disclaimers such as:
+    #
+    #     "This is not a mechanistic account."
+    #
+    # Affirmative uses fail. Negated uses are reported but allowed.
+    # -------------------------------------------------------------------------
+
+    candidate_body = body_of(new).lower()
+
+    negations = [
+        "not ",
+        "no ",
+        "never ",
+        "without ",
+        "rather than ",
+        "makes no ",
+        "make no ",
+        "avoid ",
+        "nor ",
+    ]
+
+    for banned_word in BANNED:
+        matches = re.finditer(
+            rf"\b{banned_word}\b",
+            candidate_body,
+        )
+
+        for match in matches:
+            before = candidate_body[
+                max(0, match.start() - 70):match.start()
+            ]
+
+            context = candidate_body[
+                max(0, match.start() - 40):match.end() + 10
+            ].strip()
+
+            if any(negation in before for negation in negations):
+                print(
+                    f"  note: {banned_word!r} used in a disclaimer "
+                    f"(allowed): ...{context}..."
+                )
             else:
                 failures.append(
-                    f"BANNED WORD (G2/D020) used affirmatively: {w!r} at "
-                    f"...{low[max(0, m.start() - 40):m.end() + 20].strip()}...")
+                    f"BANNED WORD (G2/D020) used affirmatively: "
+                    f"{banned_word!r} at "
+                    f"...{candidate_body[max(0, match.start() - 40):match.end() + 20].strip()}..."
+                )
+
+    # -------------------------------------------------------------------------
+    # Result
+    # -------------------------------------------------------------------------
 
     print()
+
     if failures:
         print(f"FAILED - {len(failures)} violation(s):")
-        for f in failures:
-            print(f"  {f}")
+
+        for failure in failures:
+            print(f"  {failure}")
+
         sys.exit(1)
-    print("PASSED - no numeric, hedge, structural or vocabulary violations")
+
+    print(
+        "PASSED - no numeric, hedge, structural or vocabulary violations"
+    )
 
 
 if __name__ == "__main__":
