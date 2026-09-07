@@ -31,6 +31,7 @@ Statuses are `OPEN`, `IN_PROGRESS`, `BLOCKED`, and `DONE`. Before starting, add 
 | I23 | DONE | Claude | Pre-round acceptance prediction from cached representations | I10,I12 | I13,I14 | GPU |
 | I24 | OPEN | — | Staged release package (benchmark, recipes, integration adapter) | I18,I20 | — | GPU/CPU |
 | I25 | OPEN | — | EAGLE-3 line: pre-round-signal transfer + fused-feature analysis (separate track, D028/D029) | I13,I15,I23 | — | A100/H100 |
+| I26 | IN_PROGRESS | Claude | Static-KV CUDA-graph draft path for deployed-regime latency characterization (Tier-1, D021 scope; unblocks honest M3/G3 draft-cost) | I04 | — | A100/H100 |
 
 ## Build status (2026-07-10, Claude)
 
