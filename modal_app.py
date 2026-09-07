@@ -1307,8 +1307,8 @@ def bench_static_draft(run_id: str = "sweep-2026-07-11T203836",
     def static_draft(L):
         cur = cur0_s
         for _ in range(L):
-            tok = int(greedy_token(cur))
-            cur = stepper.step(tok)
+            nxt = greedy_token(cur)  # 0-dim device tensor: no host sync (config C)
+            cur = stepper.step(nxt)
         stepper.rewind_to_prefill()
 
     # verify + gap (eager target) reused for the oracle cost profile
