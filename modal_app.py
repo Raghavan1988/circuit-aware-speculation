@@ -1225,6 +1225,163 @@ def bench(run_id: str = "sweep-2026-07-11T203836", attn: str = "eager",
     bench_draft.remote(run_id, attn=attn, compile_mode=compile_mode)
 
 
+@app.function(image=image, gpu=GPU, volumes=VOLUMES, timeout=3600)
+def bench_static_draft(run_id: str = "sweep-2026-07-11T203836",
+                       context_len: int = 128, n_warmup: int = 8, n_iter: int = 25,
+                       gap: int = 5, compile_mode: str = "reduce-overhead") -> dict:
+    """I26 (Tier-1, D021): measure the DEPLOYED-REGIME draft cost that T3.4 could
+    not reach, then recompute the sealed-label M3 headroom at that cost.
+
+    T3.4 showed the eager DynamicCache draft is launch-bound (~24 ms/token) and
+    that neither compile mode helps ON a dynamic cache. This runs the draft's
+    per-token decode on a fixed-shape StaticCache step wrapped in
+    ``torch.compile(mode=compile_mode)`` (reduce-overhead -> CUDA-graph replay),
+    the one path that removes the launch overhead, and compares it head-to-head
+    with the eager baseline in the same container (kills cross-container jitter).
+
+    Latency characterization only (D021): stale-slot rollback is not exercised
+    (I26 module docstring), which does not affect a per-forward cost number.
+    Any *scientific* use of a compiled draft still owes the token-identity gate.
+    """
+    import json
+    import dataclasses
+
+    import torch
+    from transformers import DynamicCache
+
+    from cas.analysis.oracle import oracle_policy_value
+    from cas.config import EngineConfig
+    from cas.models import load_pair
+    from cas.signals import greedy_token
+    from cas.spec_decode import _forward
+    from cas.static_decode import StaticDraftStepper
+    from scripts.run_t3_analysis import _match_vectors, _read_parquet
+
+    torch.set_grad_enabled(False)
+    ACTIONS = [1, 2, 3, 4, 6, 8]
+    cmode = compile_mode or None
+    cfg = EngineConfig()  # draft/target stay eager at the MODEL level; the static
+    pair = load_pair(cfg)  # step is compiled inside StaticDraftStepper.
+    dev = pair.device
+
+    with open("/artifacts/data/prompts.jsonl") as f:
+        row = json.loads(f.readline())
+    ids = pair.tokenizer(row["prompt_text"])["input_ids"][:context_len]
+    if len(ids) < 8:
+        ids = (ids * 8)[:context_len]
+    ctx = torch.tensor([ids], device=dev)
+    ctx_len = ctx.shape[1]
+    max_cache_len = ctx_len + max(ACTIONS) + 4
+
+    def median_ms(fn):
+        for _ in range(n_warmup):
+            fn()
+        torch.cuda.synchronize()
+        ts = []
+        for _ in range(n_iter):
+            s = torch.cuda.Event(enable_timing=True)
+            e = torch.cuda.Event(enable_timing=True)
+            s.record(); fn(); e.record(); torch.cuda.synchronize()
+            ts.append(s.elapsed_time(e))
+        ts.sort()
+        return ts[len(ts) // 2]
+
+    # ---- eager DynamicCache draft baseline (config-C: no per-token sync) ----
+    d_cache = DynamicCache()
+    d_logits, d_cache, d_ctx = _forward(pair.draft, ctx, d_cache, 0)
+    cur0 = d_logits[0, -1].clone()
+
+    def eager_draft(L):
+        cur = cur0
+        for i in range(L):
+            nxt = greedy_token(cur).view(1, 1)
+            dl, _c, _ = _forward(pair.draft, nxt, d_cache, d_ctx + i)
+            cur = dl[0, -1]
+        d_cache.crop(d_ctx)
+
+    # ---- static + compiled draft (the deployed-regime path) ---------------
+    stepper = StaticDraftStepper(pair.draft, max_cache_len=max_cache_len,
+                                 compile_mode=cmode)
+    cur0_s = stepper.prefill(ids)
+
+    def static_draft(L):
+        cur = cur0_s
+        for _ in range(L):
+            tok = int(greedy_token(cur))
+            cur = stepper.step(tok)
+        stepper.rewind_to_prefill()
+
+    # verify + gap (eager target) reused for the oracle cost profile
+    t_cache = DynamicCache()
+    _, t_cache, t_ctx = _forward(pair.target, ctx, t_cache, 0)
+
+    def verify(n):
+        def f():
+            _l, _c, _ = _forward(pair.target, ctx[:, :n], t_cache, t_ctx)
+            t_cache.crop(t_ctx)
+        return f
+
+    def gap_forward():
+        _dl, _c, _ = _forward(pair.draft, ctx[:, :gap], d_cache, d_ctx)
+        d_cache.crop(d_ctx)
+
+    gap_ms = median_ms(gap_forward)
+    verify0_ms = median_ms(verify(1))
+    verify_ms = {L: median_ms(verify(L + 1)) for L in ACTIONS}
+    eager_ms = {L: median_ms(lambda L=L: eager_draft(L)) for L in ACTIONS}
+    static_ms = {L: median_ms(lambda L=L: static_draft(L)) for L in ACTIONS}
+    eager_per_tok = {L: eager_ms[L] / L for L in ACTIONS}
+    static_per_tok = {L: static_ms[L] / L for L in ACTIONS}
+
+    matches = _match_vectors(
+        _read_parquet(f"/artifacts/traces/{run_id}/fixed_8/rounds.parquet"))
+
+    def costs_from(draft_ms):
+        c = {0: verify0_ms * 1e6}
+        for L in ACTIONS:
+            c[L] = (verify_ms[L] + gap_ms + draft_ms[L]) * 1e6
+        return c
+
+    headroom = {}
+    for tag, dms in (("eager", eager_ms), ("static_compiled", static_ms)):
+        r = oracle_policy_value(matches, costs_from(dms), actions=tuple(sorted(costs_from(dms))))
+        headroom[tag] = {"best_fixed_L": r["best_fixed"][0],
+                         "headroom_pct": round(r["headroom"] * 100, 2)}
+
+    speedup = (sum(eager_per_tok.values()) / sum(static_per_tok.values())
+               if sum(static_per_tok.values()) else 0.0)
+    print(f"\nctx_len={ctx_len}  compile_mode={cmode}  gap={gap_ms:.2f}ms  "
+          f"verify0={verify0_ms:.2f}ms")
+    print(f"{'L':>3} | {'eager/tok':>9} | {'static/tok':>10} | {'verify':>7}")
+    for L in ACTIONS:
+        print(f"{L:>3} | {eager_per_tok[L]:>9.2f} | {static_per_tok[L]:>10.2f} | "
+              f"{verify_ms[L]:>7.2f}")
+    print(f"\ndraft per-token speedup (eager/static) ~= {speedup:.2f}x")
+    print("=== M3 HEADROOM (sealed fixed_8 labels, measured costs) ===")
+    for tag in ("eager", "static_compiled"):
+        h = headroom[tag]
+        gate = "PROCEED" if h["headroom_pct"] >= 5 else "STOP"
+        print(f"  [{tag:>15}] best_fixed L={h['best_fixed_L']:>2}  "
+              f"headroom={h['headroom_pct']:>6.2f}%  -> {gate}")
+
+    out = {"compile_mode": cmode, "context_len": ctx_len, "n_iter": n_iter,
+           "gap_ms": gap_ms, "verify0_ms": verify0_ms, "verify_ms": verify_ms,
+           "eager_per_tok_ms": eager_per_tok, "static_per_tok_ms": static_per_tok,
+           "draft_per_tok_speedup": speedup, "headroom": headroom}
+    path = f"/artifacts/analysis/{run_id}/i26_bench_static_{cmode or 'eager'}.json"
+    with open(path, "w") as f:
+        json.dump(out, f, indent=2, sort_keys=True)
+    artifacts.commit()
+    print(f"\nwrote {path}")
+    return headroom
+
+
+@app.local_entrypoint()
+def bench_static(run_id: str = "sweep-2026-07-11T203836",
+                 compile_mode: str = "reduce-overhead"):
+    bench_static_draft.remote(run_id, compile_mode=compile_mode)
+
+
 @app.function(image=image, gpu=GPU, volumes=VOLUMES, timeout=6 * 3600)
 def capture_activations(run_id: str = "sweep-2026-07-11T203836",
                         cap_prompts: int = 120, split: str = "dev") -> dict:
