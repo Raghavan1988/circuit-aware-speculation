@@ -545,6 +545,44 @@ hand-entered.
   place; it just has nothing to compile *to* until a static-cache path exists.
 - Logged by Claude, 2026-07-12.
 
+### Run log 2026-09-06 — I26 static-KV draft path (Tier-1 latency characterization)
+
+- **Motivation.** T3.4 left the deployed-regime draft cost unmeasured: on the
+  eager `DynamicCache` path neither `torch.compile` mode circumvents launch-bound
+  (reduce-overhead errors on the growing dynamic KV; default recompiles per step).
+  T3.4's own conclusion named the fix — a fixed-shape `StaticCache` decode step
+  that is both compilable (one shape) and CUDA-graph-replayable. I26 builds that
+  step as a **measurement path** (D021 scope), NOT a serving integration (Tier-2).
+- **Built (code, not yet a GPU number).** `src/cas/static_decode.py`
+  (`StaticDraftStepper`: warm prefill + fixed-shape single-token static step, with
+  optional `torch.compile`); `modal_app.py::bench_static_draft` (head-to-head eager
+  vs static-compiled draft ms/token in one container, then re-runs
+  `oracle_policy_value` on the sealed fixed_8 matches at the measured static cost
+  to produce the honest M3 headroom). Run on Modal:
+  `modal run modal_app.py::bench_static`. **No headroom number is claimed until
+  that runs on H100** — local has no suitable GPU and the local inductor toolchain
+  is broken (`backports.tarfile`), so CUDA-graph replay is unverified here.
+- **Forward-step equivalence VERIFIED on CPU (fp32, tiny random Llama):**
+  `tests/test_static_cache_equiv.py` — the static single-token step is
+  token-identical to the eager `DynamicCache` step for a fresh (no-rollback)
+  draft, and the per-position logits agree to <1e-4. This is the D021 forward-step
+  re-verification for the latency path (2 passed).
+- **New finding (bounds the Tier-2 boundary, argues against premature engine
+  work).** A correct **rollback** is NOT a `StaticCache` write-pointer reset:
+  rewriting from an earlier `cache_position` leaks the stale rejected K/V of higher
+  slots into the attention read (argmax flips; logit gap ~0.065 on a tiny model),
+  and an explicit 2D valid-length `attention_mask` did not suppress it on
+  transformers 5.13. Recorded as an xfail (`test_static_rollback_is_lossless`) so a
+  future silent fix flags as xpass. **Consequence:** a *lossless* static-generate
+  path (and thus any static-cache **scientific** result) needs version-specific
+  KV-mask engineering — serving-grade plumbing — which keeps it in Tier-2/G4, not
+  Tier-1. The latency characterization does not need rollback and is unaffected.
+- **Impact on claims.** None yet. When `bench_static` runs, the measured static
+  draft cost feeds the C05/C06 M3 re-decision (currently harness-dependent /
+  G3-gated); the execution mode and the pending equivalence gate must be stated
+  with any resulting net-latency number (D021).
+- Logged by Claude, 2026-09-06.
+
 ## Low-hanging-fruit analyses (LHF #1-6), offline on sealed fixed_8 traces
 
 Six CPU-only analyses over the sealed Qwen-v1 (`sweep-2026-07-11T203836`, 19,074
