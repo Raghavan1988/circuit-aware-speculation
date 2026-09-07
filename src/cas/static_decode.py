@@ -112,31 +112,48 @@ class StaticDraftStepper:
         self.device = self.model.device
         self._prefill_len = 0
         self.pos = 0
+        # Pre-allocated STATIC input buffers. CUDA-graph replay (reduce-overhead)
+        # requires the graph's inputs to live at fixed addresses: we mutate these
+        # in place each step (never re-allocate), so the captured graph reads the
+        # new token id / cache_position on replay. Freshly-allocated per-step
+        # inputs are what trip the "tensor overwritten by a subsequent run" error
+        # (CLAIMS_LEDGER T3.4).
+        self._ids = torch.zeros((1, 1), dtype=torch.long, device=self.device)
+        self._cp = torch.zeros((1,), dtype=torch.long, device=self.device)
         step: Callable = static_forward
         if self.compile_mode:
-            # Compile the bare forward; the step's shape is constant so this
+            # Compile the bare forward; the step's shape is constant [1,1] so this
             # traces once. reduce-overhead additionally captures a CUDA graph.
             step = torch.compile(static_forward, mode=self.compile_mode)
         self._step = step
 
     def prefill(self, prompt_ids: list[int]) -> torch.Tensor:
-        """Process the prompt in one (non-graph) forward; returns last-token
-        logits. Resets the write pointer to the end of the prompt."""
+        """Process the prompt in one (non-graph) eager forward; returns last-token
+        logits (cloned). Resets the write pointer to the end of the prompt."""
         ids = torch.tensor([prompt_ids], device=self.device)
         cp = torch.arange(0, ids.shape[1], device=self.device)
         logits = static_forward(self.model, ids, self.cache, cp)
         self._prefill_len = ids.shape[1]
         self.pos = ids.shape[1]
-        return logits[0, -1]
+        return logits[0, -1].clone()
 
-    def step(self, token_id: int) -> torch.Tensor:
-        """Advance one token through the fixed-shape (graph-captured) path;
-        returns the new last-token logits."""
-        ids = torch.tensor([[token_id]], device=self.device)
-        cp = torch.arange(self.pos, self.pos + 1, device=self.device)
-        logits = self._step(self.model, ids, self.cache, cp)
+    def step(self, token) -> torch.Tensor:
+        """Advance one token through the fixed-shape (graph-captured) path.
+
+        ``token`` may be a python int (CPU tests) or a 0-dim device tensor (the
+        deployment-realistic path: the previous step's on-device argmax, written
+        device-to-device with NO host sync so the timing is comparable to the
+        eager no-sync baseline). Returns the new last-token logits (cloned, so the
+        caller keeps a stable copy across the next CUDA-graph replay).
+        """
+        if isinstance(token, torch.Tensor):
+            self._ids[0, 0].copy_(token.reshape(()))  # device->device, no sync
+        else:
+            self._ids[0, 0] = int(token)
+        self._cp[0] = self.pos
+        logits = self._step(self.model, self._ids, self.cache, self._cp)
         self.pos += 1
-        return logits[0, -1]
+        return logits[0, -1].clone()
 
     def rewind_to_prefill(self) -> None:
         """Reset the write pointer to the post-prefill position for the next
