@@ -52,11 +52,15 @@ Nothing in Phase 1 imports or depends on SGLang. Phase 2 is a separate track.
 - Rough budget (per D013: Modal, H100 80GB at ~US$3–5/hr): 40–60 GPU-hours for
   the full protocol ≈ **US$150–300**. Trace/activation storage: plan tens of GB.
 
-## 3. Competitive landscape (scanned 2026-07-10; verify via I21 before freezing claims)
+## 3. Competitive landscape (scanned 2026-07-10; last I21 pass 2026-07-24)
 
 Closest published/preprint neighbors. None provides a mechanistic account of
 acceptance; that is the differentiation (see `RESEARCH_SPEC.md`,
 "Differentiation requirements"). Cite all; compare where marked.
+
+`docs/landscape.md` is **authoritative for comparison detail** (46 rows, ~30
+primary-verified, per-work verdicts, deployed-practice tables). This section is
+the short executive view; re-run the I21 citing sweep before any novelty freeze.
 
 | Work | What it adapts | Relevance here |
 |---|---|---|
@@ -74,6 +78,10 @@ acceptance; that is the differentiation (see `RESEARCH_SPEC.md`,
 | Theory of acceptance (arXiv:2606.30265) | Theoretical treatment of acceptance | Verify against primary archive (found via mirror); constrains Track B option "theory". |
 | SGLang adaptive speculation (docs, 2026) | Runtime `num_steps` via EMA of accepted length; server-level tiers with pre-captured CUDA graphs | Engines now ship adaptive length (EAGLE-only, no per-request control, no custom policies); cite; strengthens the mechanistic differentiation. |
 | DSpark (arXiv:2607.05147, 2026-07-06; authors' production stack, **not** SGLang — corrected 2026-07-11 per I21 R2) | Per-request **verify** budgets from a calibrated trained linear confidence head; live-traffic deployment | Production-deployed adjacent method — cite. Trims verification after drafting; does not avoid draft compute and needs a trained head — contrast with the pre-round bet (I23), which decides before drafting from cached states. Also publishes probe-quality metrics (AUROC 0.81–0.90, ECE ≈1%) — see 2026-07-11 ledger note on C01 reframing. |
+| AdaEAGLE (arXiv:2412.18910; verified full text 2026-07-22) | Draft **length** from a predictor over the target's final-layernorm state at the last validated-prefix token | **Nearest structural neighbor to C10 and the primary differentiation target** (3/8 cell criteria: pre-round, target frontier state, lossless). Differs on the contribution: length regression not accept/skip, uncalibrated, deliberately logit-free (no entropy/margin baselines), EAGLE trained head not an independent drafter. Name it in any C10 discussion. |
+| Judge Decoding (arXiv:2501.19309), WhiFlash (arXiv:2606.07710), SemanticSpec (arXiv:2602.03708) | Target-side signals for verify-time judging / drafter routing / semantic-sequence accept | C10 counterexamples with different timing or correctness contract (during verify, or routing rather than accept/skip; SemanticSpec relaxes losslessness). Cite; see landscape.md for the per-work threat checks. |
+| EAGLE-3 (arXiv:2503.01840; verified 2026-07-24) | Draft head over **fused low/mid/high target hidden states**; direct-token objective | **I25 substrate, not a core-manuscript pre-emption** (D028 firewall). Describes the fused features only qualitatively — no probing or causal analysis of acceptance, which is the Q3 opening. No official Qwen2.5-7B head; community head pinned by revision per I25. |
+| TAPS (arXiv:2603.27027; verified 2026-07-24) | Per-domain trained EAGLE drafters + confidence-based routing + merged-tree verify | **Pre-empts I25/Q1** (domain specialization + routing) and independently reports confidence > entropy as the routing signal. Q1 demoted to replication-and-cite; does not touch C10 or C04. Full PDF read pending before I25 compute. |
 | Not-a-Bandit (arXiv:2510.20064; earlier cited ID 2506.00285 was wrong — corrected 2026-07-11) | No-regret full-information drafter selection | Deferred-scope relative; cite. Full-information label trick reused for counterfactual training labels (D018.3). |
 | MetaSD (2024) | Per-step drafter UCB | Deferred-scope relative; cite. |
 | Task detection + heterogeneous drafting (arXiv:2505.08600) | Task-based routing | Closest to the deferred routing idea; cite. |
