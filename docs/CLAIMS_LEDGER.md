@@ -17,7 +17,7 @@ No claim may move to `SUPPORTED` without experiment identifiers, applicable sett
 | C03 | Rejection-associated directions have a controlled effect on draft–target divergence or acceptance. | PARTIAL | Dose-response intervention with random and norm-matched controls | I15 intervene, held-out test rounds of `sweep-2026-07-11T203836` (Qwen-v1) and `sweep-llama-f8-2026-07-13` (Llama); `analysis/<run>/intervene.json` (2026-07-22) | **First-token acceptance only** (does not extend to run-length, per the I23 survival negative). Steering the first-token acceptance direction in the TARGET's cached frontier representation disrupts acceptance ~2–10× more than norm-matched random/shuffled controls, dose-dependently, beyond induced entropy, at all 4 layers, both families. Scope: representation-level control of the target's next-token agreement-ability — NOT a draft–target "circuit"; language upgrade is a human gate (D020). See causal_intervention_report.md + 2026-07-22 note |
 | C04 | Acceptance behavior differs systematically across token categories and generation phases. | SUPPORTED — CATEGORY axis only (frozen test 3/3, 2026-07-22); phase axis REFUTED-as-inconsistent | Acceptance atlas with paired uncertainty and annotation validation | `c04_atlas_{dev,test}.json` on all three settings (machinery 80ee48b; pre-registration 968c425); structural-vs-entity contrast on test: overall +0.195/+0.210/+0.118 (p=0), within-domain CI-clean in 15/15 cells incl. the pre-registered expected-null (Llama-code +0.067) | **Category axis only:** the phase half is null on Qwen (spread ≤0.9pp both corpora) and monotone-increasing on Llama only (descriptive; length/mix confound possible) — no cross-family phase claim. Weakest cell: Qwen-v1 summ (+0.054, p=0.027, CI lo −0.002). Domain-grain prior (arXiv:2604.14682) reproduced as CONTROL; our axis is category-within-domain. Labels: overlapping categories v1.0.0, counterfactual fixed_8 `target_match`. Llama `reasoning_transition` is not low (Qwen-only); Llama `special` ≈0.007 anomaly recorded descriptively |
 | C05 | Selective speculation with a skip action reduces wasted compute relative to adaptive-length baselines. | UNTESTED | Held-out comparison including all overhead | — | — |
-| C06 | The circuit-aware controller improves net latency over the best global fixed policy. | UNTESTED | Paired held-out wall-clock study with uncertainty | — | **Harness-dependent (2026-07-12, T3.4):** the routing headroom this claim needs is ~5% on the eager launch-bound harness (best fixed action = skip) and only reaches ~25–46% under a serving-grade fused+graph-captured draft. Any net-latency claim must state the execution mode. See Run log 2026-07-12 |
+| C06 | The circuit-aware controller improves net latency over the best global fixed policy. | UNTESTED | Paired held-out wall-clock study with uncertainty | — | **Harness-dependent (2026-07-12, T3.4):** the routing headroom this claim needs is ~5% on the eager launch-bound harness (best fixed action = skip) and only reaches ~25–46% under a serving-grade fused+graph-captured draft. Any net-latency claim must state the execution mode. See Run log 2026-07-12. **Measured 2026-09-06 (I26, H100): static+CUDA-graph draft = 1.84 ms/tok (6.23x over eager), sealed-label oracle headroom 45.57% (best fixed L=8) vs 4.95% eager (best fixed skip) → M3 PROCEED; full end-to-end G3 wall-clock still gated (needs lossless static-generate loop). See Run log 2026-09-06** |
 | C07 | Any controller advantage persists against the best per-domain fixed policy. | UNTESTED | Per-domain held-out comparison | — | — |
 | C08 | The signal or controller transfers under domain and traffic shift without full retuning. | UNTESTED | Shift study with calibration drift and latency regret | — | — |
 | C09 | The principal finding replicates outside the primary Qwen pair. | UNTESTED | Compatible Llama pair or approved Qwen-ratio fallback | — | — |
@@ -553,15 +553,24 @@ hand-entered.
   T3.4's own conclusion named the fix — a fixed-shape `StaticCache` decode step
   that is both compilable (one shape) and CUDA-graph-replayable. I26 builds that
   step as a **measurement path** (D021 scope), NOT a serving integration (Tier-2).
-- **Built (code, not yet a GPU number).** `src/cas/static_decode.py`
-  (`StaticDraftStepper`: warm prefill + fixed-shape single-token static step, with
-  optional `torch.compile`); `modal_app.py::bench_static_draft` (head-to-head eager
-  vs static-compiled draft ms/token in one container, then re-runs
-  `oracle_policy_value` on the sealed fixed_8 matches at the measured static cost
-  to produce the honest M3 headroom). Run on Modal:
-  `modal run modal_app.py::bench_static`. **No headroom number is claimed until
-  that runs on H100** — local has no suitable GPU and the local inductor toolchain
-  is broken (`backports.tarfile`), so CUDA-graph replay is unverified here.
+- **Built.** `src/cas/static_decode.py` (`StaticDraftStepper`: warm prefill +
+  fixed-shape single-token static step with pre-allocated static input buffers for
+  CUDA-graph replay, plus optional `torch.compile`); `modal_app.py::bench_static_draft`
+  (head-to-head eager vs static-compiled draft ms/token in one container, then
+  re-runs `oracle_policy_value` on the sealed fixed_8 matches at the measured static
+  cost). Run on Modal: `modal run modal_app.py::bench_static`.
+- **GPU RESULT (H100, `reduce-overhead`, ctx_len=118; artifact
+  `analysis/sweep-2026-07-11T203836/i26_bench_static_reduce-overhead.json`,
+  script-generated).** The static + CUDA-graph draft step **cures the launch-bound
+  draft**: draft cost drops from **~11.4 ms/token (eager) to ~1.84 ms/token
+  (static-compiled) — a 6.23x per-token speedup** (verify, 7B: ~15-17.5 ms; gap
+  catch-up 12.5 ms). Re-running the oracle on the sealed fixed_8 acceptance labels
+  at these measured costs: **eager → best fixed action = skip (L=0), 4.95% headroom
+  (STOP); static-compiled → best fixed = L=8, 45.57% headroom (PROCEED)**. This
+  confirms T3.4's prediction (26-46% at a serving-realistic draft cost) on real
+  hardware and refutes the "skip is best / ~5% headroom" reading as a launch-bound
+  harness artifact. Draft-vs-verify cost now tracks memory/compute, not fixed
+  per-forward dispatch.
 - **Forward-step equivalence VERIFIED on CPU (fp32, tiny random Llama):**
   `tests/test_static_cache_equiv.py` — the static single-token step is
   token-identical to the eager `DynamicCache` step for a fresh (no-rollback)
@@ -577,10 +586,18 @@ hand-entered.
   path (and thus any static-cache **scientific** result) needs version-specific
   KV-mask engineering — serving-grade plumbing — which keeps it in Tier-2/G4, not
   Tier-1. The latency characterization does not need rollback and is unaffected.
-- **Impact on claims.** None yet. When `bench_static` runs, the measured static
-  draft cost feeds the C05/C06 M3 re-decision (currently harness-dependent /
-  G3-gated); the execution mode and the pending equivalence gate must be stated
-  with any resulting net-latency number (D021).
+- **Impact on claims — M3 re-decision: PROCEED (scope-limited).** The measured
+  deployed draft cost resolves the T3.4 confound: the routing headroom the C05/C06
+  controllers target is **real and large (45.57%)**, not the ~5% eager artifact, so
+  M3 flips STOP→PROCEED. **What this is NOT:** it is the oracle headroom on sealed
+  labels at *measured component costs*, not a full paired end-to-end wall-clock
+  `generate()` under a deployable controller. A definitive **G3 net-wall-clock**
+  claim still needs the controller run inside a lossless static-generate loop —
+  which needs the static-cache rollback (the KV-mask obstacle above) — plus
+  controller/transfer/sync overhead. So C06 stays **G3-gated**; this entry moves
+  the blocker (unmeasured deployed draft cost) and sets the direction strongly
+  positive. Per D021, the `reduce-overhead` path is timing-only and still owes a
+  token-identity re-verification before any *scientific* (lossless) use.
 - Logged by Claude, 2026-09-06.
 
 ## Low-hanging-fruit analyses (LHF #1-6), offline on sealed fixed_8 traces
