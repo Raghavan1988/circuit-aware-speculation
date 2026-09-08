@@ -159,3 +159,59 @@ class StaticDraftStepper:
         """Reset the write pointer to the post-prefill position for the next
         timed draft. Timing-only: stale slots are not cleared (see docstring)."""
         self.pos = self._prefill_len
+
+    def reset(self) -> None:
+        """Zero the cache IN PLACE so one (already-compiled) stepper can be
+        re-prefilled with a new prompt across a multi-prompt sweep. In-place is
+        required: reallocating would give the captured CUDA graph stale tensor
+        addresses. Falls back to reallocation if the cache lacks ``reset`` (then
+        a compiled step recompiles on next call -- acceptable, just slower)."""
+        if hasattr(self.cache, "reset"):
+            self.cache.reset()
+        else:  # pragma: no cover - version fallback
+            self.cache = make_static_cache(self.model, self.max_cache_len)
+        self.pos = 0
+        self._prefill_len = 0
+
+
+# ---- pure aggregation helpers (unit-tested on CPU; no torch/GPU needed) -------
+
+def per_token_speedup(eager_totals: dict, static_totals: dict) -> float:
+    """Aggregate draft per-token speedup as (sum eager draft time) / (sum static
+    draft time) over the measured lengths -- weights longer L by where the cost
+    actually sits, and reduces to per_tok_eager / per_tok_static when the
+    per-token cost is flat (the launch-bound regime)."""
+    e = sum(eager_totals.values())
+    s = sum(static_totals.values())
+    return e / s if s else 0.0
+
+
+def bootstrap_mean_ci(values, n_boot: int = 1000, seed: int = 0,
+                      lo: float = 2.5, hi: float = 97.5):
+    """Percentile bootstrap CI for the mean of per-prompt scalars. The prompt is
+    the resampling unit, giving prompt-grouped uncertainty (contract: treat
+    tokens from one prompt as dependent; resample at the prompt level).
+
+    Returns (mean, lo_ci, hi_ci). Empty input -> (0.0, 0.0, 0.0); a single value
+    -> that value with a degenerate interval.
+    """
+    import random
+
+    vals = list(values)
+    n = len(vals)
+    if n == 0:
+        return 0.0, 0.0, 0.0
+    mean = sum(vals) / n
+    if n == 1:
+        return mean, vals[0], vals[0]
+    rng = random.Random(seed)
+    means = []
+    for _ in range(n_boot):
+        s = 0.0
+        for _ in range(n):
+            s += vals[rng.randrange(n)]
+        means.append(s / n)
+    means.sort()
+    lo_i = min(n_boot - 1, max(0, int(lo / 100.0 * n_boot)))
+    hi_i = min(n_boot - 1, max(0, int(hi / 100.0 * n_boot)))
+    return mean, means[lo_i], means[hi_i]
