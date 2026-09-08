@@ -124,6 +124,59 @@ def test_d018_fields_recorded(decoder):
         assert "prefill" not in rt.latency_ns
 
 
+@pytest.mark.parametrize("length", [1, 4, 8])
+def test_static_draft_matches_greedy(decoder, length):
+    """I26 / D021 gate: the StaticCache draft path must propose token-identical
+    drafts to the eager DynamicCache path on real weights.
+
+    This is the equivalence re-verification D021 requires before the compiled
+    static path is used for any *scientific* result: it isolates the cache
+    substrate (StaticCache + cache_position vs DynamicCache), feeding both the
+    same 0.5B draft weights from the same prefill. Run compile_mode=None so the
+    check is deterministic (the compiled path adds only fp near-ties, handled
+    like the bf16 argmax ties in test_fp_divergence_rate_per_token). Use
+    CAS_DTYPE=float32 for the strict bit-identity reading.
+    """
+    import torch
+
+    from transformers import DynamicCache
+
+    from cas.signals import greedy_token
+    from cas.spec_decode import _forward
+    from cas.static_decode import StaticDraftStepper
+
+    dec, pair = decoder
+    for prompt in PROMPTS:
+        prompt_ids = pair.tokenizer(prompt)["input_ids"]
+
+        # eager DynamicCache draft (the reference: same math as spec_decode)
+        ids = torch.tensor([prompt_ids], device=dec.device)
+        dl, dc, dlen = _forward(pair.draft, ids, DynamicCache(), 0)
+        cur = dl[0, -1]
+        eager = []
+        for _ in range(length):
+            t = int(greedy_token(cur))
+            eager.append(t)
+            dl, dc, dlen = _forward(
+                pair.draft, torch.tensor([[t]], device=dec.device), dc, dlen)
+            cur = dl[0, -1]
+
+        # static-cache draft
+        stepper = StaticDraftStepper(
+            pair.draft, max_cache_len=len(prompt_ids) + length + 4,
+            compile_mode=None)
+        cur = stepper.prefill(prompt_ids)
+        static = []
+        for _ in range(length):
+            t = int(greedy_token(cur))
+            static.append(t)
+            cur = stepper.step(t)
+
+        assert static == eager, (
+            f"static draft diverged from eager at L={length} on {prompt!r}: "
+            f"{_first_diff(static, eager)}")
+
+
 def test_fp_divergence_rate_per_token(decoder):
     """Characterize (not gate) the PER-TOKEN argmax-flip rate between the
     batched-verify and sequential-decode target forwards, and confirm every
