@@ -2,8 +2,8 @@
 
 > **In one line:** We found a simple, free trick that makes a big AI model run faster — and we proved two fancier ideas don't help. Every number here comes from a script reading saved data, never typed by hand.
 
-- **Prepared 2026-07-13** (replaces the 2026-07-12 version)
-- **Big model:** Qwen2.5-7B-Instruct · **Small models:** Qwen2.5 0.5B and 1.5B · **Ran on:** Modal, A100
+- **Prepared 2026-07-13** (replaces the 2026-07-12 version) · **Updated 2026-09-07** with the measured slowness fix (§3.5)
+- **Big model:** Qwen2.5-7B-Instruct · **Small models:** Qwen2.5 0.5B and 1.5B · **Ran on:** Modal, A100 (the 2026-09-07 speed measurement: H100)
 
 ---
 
@@ -12,7 +12,8 @@
 - ✅ **Guessing a smart number of words works.** A simple, free rule beats the best fixed number by **+11.2%** and cuts wasted guessing by **62%**.
 - ❌ **Specialist small models don't help.** A general-purpose model of the same size ties or beats them — even on the specialist's own topic.
 - ➡️ **So the "combine both" question shrinks** down to just the first idea (smart word count).
-- 📊 **The supporting findings hold up.** Some kinds of words are much easier to guess than others (we mapped this — the "atlas"); cheap signals predict success just as well as digging into the model's internals; and our research setup makes the small model look slower than it really is, so we hold off on any raw speed claim.
+- 📊 **The supporting findings hold up.** Some kinds of words are much easier to guess than others (we mapped this — the "atlas"); cheap signals predict success just as well as digging into the model's internals; and our research setup makes the small model look slower than it really is (now measured and fixable — see next bullet).
+- 🚀 **We measured the fix for the slowness.** On a proper serving-style setup the small model runs **6.2× faster per word**, and the smart-word-count opportunity jumps from ~5% to **~46%** — confirming our earlier estimate on real hardware. One engineering piece still stands between us and a raw clock-time claim.
 - 🗂️ **We built a better test set.** Version 2: 1,494 prompts, 7 task types, 9 datasets, all license-checked. A repeat of the specialist test on it is running now.
 
 ---
@@ -119,14 +120,23 @@ This is the *reason* the smart word-count rule works — and it doesn't depend o
 
 So for this model pair, the useful information is already in the free signals. (A clean "no extra benefit" result.)
 
-### 3.5 Our setup makes the small model look too slow *(a systems finding)*
+### 3.5 Our setup makes the small model look too slow — and we measured the fix *(a systems finding)*
 
-Running the small model one word at a time costs **~24 ms per word** — nearly as much as one big-model check (**~30 ms**). That's not because it's doing lots of math; it's overhead from launching the work.
+Running the small model one word at a time costs **~24 ms per word** (on A100) — nearly as much as one big-model check (**~30 ms**). That's not because it's doing lots of math; it's overhead from *launching* the work. On this setup the best rule is just "don't guess," so the speedup looks like only **~5%**.
 
-- Standard quick fixes don't solve it; the real fix is deeper engineering we're deliberately saving for later.
-- **The upshot:** on this setup, the speedup looks like only ~5%. But the same data says it would be **25% to 46%** on a proper serving setup.
+**Update (2026-09-07, measured on H100).** We built the proper serving-style version of the small-model step — fixed-shape, pre-compiled, so the work is launched once and replayed instead of re-launched every word — and ran it head-to-head against the old way in the same container:
 
-That's why we report **efficiency**, not raw clock time, and say so plainly.
+| Small-model step | Cost per word | 
+|---|---|
+| Old way (our research setup) | ~11.4 ms |
+| **Proper serving-style (fixed-shape, pre-compiled)** | **~1.84 ms** |
+
+That's a **6.2× speedup**, and it confirms the overhead — not math — was the problem. Feeding this real cost back into the saved-label replay, the smart-word-count opportunity **jumps from 4.95% (best rule: don't guess) to 45.57% (best rule: guess 8)** — landing squarely in the 25–46% we predicted. The launch-overhead trap was a research-setup artifact, not a real limit.
+
+- **What this settles:** the opportunity is real and large; the earlier ~5% was an artifact of our measurement setup, now proven.
+- **What still stands:** this uses the *measured cost* replayed on saved labels, not a full end-to-end stopwatch run of the live controller. One engineering piece remains — letting the fixed-shape setup correctly "undo" a rejected guess (we found and documented exactly where the naïve version goes wrong). Until that's built, we still report **efficiency**, not raw clock time, and say so plainly.
+
+*(Numbers script-generated: `analysis/.../i26_bench_static_reduce-overhead.json`.)*
 
 ### 3.6 A better test set (version 2)
 
@@ -140,7 +150,7 @@ The story fits together — the positives and the negatives back each other up:
 
 1. **The win:** easy and hard words follow a clear pattern (the atlas), and a free rule that reads a cheap signal turns that pattern into a real efficiency gain.
 2. **Two dead ends:** digging into the model's internals doesn't beat free signals, and specialist models don't beat a same-size generalist. Both save other researchers wasted effort and point to the real levers: model **size**, matching the **big model's style**, and adapting the **word count**.
-3. **Honest about speed:** efficiency gains are real today; raw clock-time gains wait on better engineering, and we've measured exactly how much is waiting (**25–46%**).
+3. **Honest about speed:** efficiency gains are real today; we've now *measured* that the small-model slowness is pure launch overhead (6.2× faster once fixed) and that the real opportunity is **~46%**. A raw clock-time claim waits on one remaining engineering piece — letting the fast setup undo a rejected guess.
 
 ---
 
