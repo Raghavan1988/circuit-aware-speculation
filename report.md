@@ -161,14 +161,14 @@ The story fits together — the positives and the negatives back each other up:
 3. **Finish the controller comparison** with the cheap replay tool (CPU-only).
 4. **Package the shareable dataset** — fix the split column, strip copyrighted text down to row IDs, write the dataset card.
 5. **Write the paper** around the atlas, the two dead ends, the word-count win, and the slowness finding.
-6. **Saved for later:** the deeper engineering that unlocks the real speed claim, plus a smarter way to make specialist small models.
+6. **The remaining speed piece (started):** we've built and measured the fast fixed-shape small-model step (§3.5) — 6.2× faster, opportunity confirmed at ~46%. What's left is letting it correctly undo a rejected guess so the live controller can be stopwatched end-to-end; we've pinpointed where the naïve version breaks. Plus, saved for later: a smarter way to make specialist small models.
 
 ---
 
 ## 6. Risks
 
 - **Version 2 might change version-1 conclusions.** *Plan:* same method on both sets; the repeat is already running; we'll report any differences honestly.
-- **The raw speed claim stays blocked** until the deeper engineering exists. We won't state clock-time numbers from this setup.
+- **The raw speed claim stays blocked** until one more engineering piece exists (the "undo a rejected guess" step for the fast setup, §3.5). We've measured the small-model speedup (6.2×) and the real opportunity (~46%), but we won't state an end-to-end clock-time number until the live controller can be stopwatched.
 - **Some version-2 loaders aren't version-locked yet** — must be locked before those results count.
 - **A known split-labeling bug** must be fixed before any new run. (Current results are unaffected — they recover the split at analysis time.)
 - **The Llama repeat is blocked** — we still don't have access to the small Llama model. Findings are currently one model family (Qwen).
@@ -197,5 +197,6 @@ Second model family (Llama 3.1 8B with 3.2 1B): the wiring is done and tested, b
 | Try-and-learn methods | settle at best fixed (2.40); can't beat the smart rule (2.67) |
 | Share of best-possible gain captured | ~33% |
 | Specialist vs generalist | ties on code; worse on math (its own topic) |
-| Small-model cost on this setup | ~24 ms/word (overhead-bound); big-model check ~30 ms |
-| Speedup: this setup / proper serving | ~5% / 25 to 46% |
+| Small-model cost on this setup | ~24 ms/word A100 (overhead-bound); big-model check ~30 ms |
+| Small-model cost, fixed-shape fix (H100) | ~1.84 ms/word vs ~11.4 ms old = **6.2× faster** |
+| Opportunity: our setup / measured serving fix | 4.95% (best rule: don't guess) / **45.57%** (best rule: guess 8) |
