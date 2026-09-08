@@ -555,10 +555,23 @@ hand-entered.
   step as a **measurement path** (D021 scope), NOT a serving integration (Tier-2).
 - **Built.** `src/cas/static_decode.py` (`StaticDraftStepper`: warm prefill +
   fixed-shape single-token static step with pre-allocated static input buffers for
-  CUDA-graph replay, plus optional `torch.compile`); `modal_app.py::bench_static_draft`
-  (head-to-head eager vs static-compiled draft ms/token in one container, then
-  re-runs `oracle_policy_value` on the sealed fixed_8 matches at the measured static
-  cost). Run on Modal: `modal run modal_app.py::bench_static`.
+  CUDA-graph replay, `reset()` for compile-once/re-prefill across prompts, plus
+  optional `torch.compile`; pure `bootstrap_mean_ci`/`per_token_speedup` helpers);
+  `modal_app.py::bench_static_draft` (head-to-head eager vs static-compiled draft
+  ms/token in one container, then `oracle_policy_value` on the sealed fixed_8
+  matches at the measured static cost). Run: `modal run modal_app.py::bench_static`.
+- **Rigor added 2026-09-07 (code; multi-prompt CI run pending).** `bench_static_draft`
+  now measures over `n_prompts` prompts (each padded to exactly `context_len`),
+  reports **prompt-level bootstrap CIs** on the speedup and on eager/static
+  headroom, and emits a **draft-cost sensitivity grid** (headroom vs ms/token). New
+  entrypoint `bench_static_sweep` runs the **headroom-vs-context curve** across
+  context lengths. New **D021 GPU equivalence gate**
+  `tests/test_equivalence_gpu.py::test_static_draft_matches_greedy` asserts the
+  static-cache draft is token-identical to the eager DynamicCache draft on real
+  weights (the re-verification owed before any *scientific* use of the compiled
+  path). Helpers + `reset()` re-prefill CPU-verified (token-identical across 3
+  prompts); the single-point number below should be superseded by the multi-prompt
+  CI run. Rollback loop (lossless static-generate) still deferred (Tier-2).
 - **GPU RESULT (H100, `reduce-overhead`, ctx_len=118; artifact
   `analysis/sweep-2026-07-11T203836/i26_bench_static_reduce-overhead.json`,
   script-generated).** The static + CUDA-graph draft step **cures the launch-bound
