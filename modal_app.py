@@ -1228,23 +1228,29 @@ def bench(run_id: str = "sweep-2026-07-11T203836", attn: str = "eager",
 @app.function(image=image, gpu=GPU, volumes=VOLUMES, timeout=3600)
 def bench_static_draft(run_id: str = "sweep-2026-07-11T203836",
                        context_len: int = 128, n_warmup: int = 8, n_iter: int = 25,
-                       gap: int = 5, compile_mode: str = "reduce-overhead") -> dict:
+                       gap: int = 5, compile_mode: str = "reduce-overhead",
+                       n_prompts: int = 12, n_boot: int = 1000) -> dict:
     """I26 (Tier-1, D021): measure the DEPLOYED-REGIME draft cost that T3.4 could
-    not reach, then recompute the sealed-label M3 headroom at that cost.
+    not reach, then recompute the sealed-label M3 headroom at that cost -- now
+    over MANY prompts with prompt-bootstrap CIs and a draft-cost sensitivity grid.
 
     T3.4 showed the eager DynamicCache draft is launch-bound (~24 ms/token) and
     that neither compile mode helps ON a dynamic cache. This runs the draft's
     per-token decode on a fixed-shape StaticCache step wrapped in
     ``torch.compile(mode=compile_mode)`` (reduce-overhead -> CUDA-graph replay),
-    the one path that removes the launch overhead, and compares it head-to-head
-    with the eager baseline in the same container (kills cross-container jitter).
+    the one path that removes the launch overhead, head-to-head with the eager
+    baseline in the same container. Each of ``n_prompts`` prompts (padded/truncated
+    to exactly ``context_len`` so the sweep controls context) yields its own
+    cost profile, per-prompt headroom, and speedup; we report the mean with a
+    prompt-level percentile bootstrap CI (contract: resample at the prompt level).
 
     Latency characterization only (D021): stale-slot rollback is not exercised
     (I26 module docstring), which does not affect a per-forward cost number.
-    Any *scientific* use of a compiled draft still owes the token-identity gate.
+    Any *scientific* use of a compiled draft still owes the token-identity gate
+    (tests/test_equivalence_gpu.py::test_static_draft_matches_greedy).
     """
     import json
-    import dataclasses
+    import statistics
 
     import torch
     from transformers import DynamicCache
@@ -1254,7 +1260,8 @@ def bench_static_draft(run_id: str = "sweep-2026-07-11T203836",
     from cas.models import load_pair
     from cas.signals import greedy_token
     from cas.spec_decode import _forward
-    from cas.static_decode import StaticDraftStepper
+    from cas.static_decode import (StaticDraftStepper, bootstrap_mean_ci,
+                                   per_token_speedup)
     from scripts.run_t3_analysis import _match_vectors, _read_parquet
 
     torch.set_grad_enabled(False)
@@ -1263,15 +1270,21 @@ def bench_static_draft(run_id: str = "sweep-2026-07-11T203836",
     cfg = EngineConfig()  # draft/target stay eager at the MODEL level; the static
     pair = load_pair(cfg)  # step is compiled inside StaticDraftStepper.
     dev = pair.device
+    max_cache_len = context_len + max(ACTIONS) + 4
 
+    # Read up to n_prompts prompts; pad/truncate each to EXACTLY context_len so
+    # every prompt shares one shape (compiled decode graph is reused) and the
+    # context length is the controlled variable of the sweep.
+    prompts = []
     with open("/artifacts/data/prompts.jsonl") as f:
-        row = json.loads(f.readline())
-    ids = pair.tokenizer(row["prompt_text"])["input_ids"][:context_len]
-    if len(ids) < 8:
-        ids = (ids * 8)[:context_len]
-    ctx = torch.tensor([ids], device=dev)
-    ctx_len = ctx.shape[1]
-    max_cache_len = ctx_len + max(ACTIONS) + 4
+        for line in f:
+            if len(prompts) >= n_prompts:
+                break
+            toks = pair.tokenizer(json.loads(line)["prompt_text"])["input_ids"]
+            if not toks:
+                continue
+            toks = (toks * (context_len // len(toks) + 1))[:context_len]
+            prompts.append(toks)
 
     def median_ms(fn):
         for _ in range(n_warmup):
@@ -1286,100 +1299,163 @@ def bench_static_draft(run_id: str = "sweep-2026-07-11T203836",
         ts.sort()
         return ts[len(ts) // 2]
 
-    # ---- eager DynamicCache draft baseline (config-C: no per-token sync) ----
-    d_cache = DynamicCache()
-    d_logits, d_cache, d_ctx = _forward(pair.draft, ctx, d_cache, 0)
-    cur0 = d_logits[0, -1].clone()
-
-    def eager_draft(L):
-        cur = cur0
-        for i in range(L):
-            nxt = greedy_token(cur).view(1, 1)
-            dl, _c, _ = _forward(pair.draft, nxt, d_cache, d_ctx + i)
-            cur = dl[0, -1]
-        d_cache.crop(d_ctx)
-
-    # ---- static + compiled draft (the deployed-regime path) ---------------
-    stepper = StaticDraftStepper(pair.draft, max_cache_len=max_cache_len,
-                                 compile_mode=cmode)
-    cur0_s = stepper.prefill(ids)
-
-    def static_draft(L):
-        cur = cur0_s
-        for _ in range(L):
-            nxt = greedy_token(cur)  # 0-dim device tensor: no host sync (config C)
-            cur = stepper.step(nxt)
-        stepper.rewind_to_prefill()
-
-    # verify + gap (eager target) reused for the oracle cost profile
-    t_cache = DynamicCache()
-    _, t_cache, t_ctx = _forward(pair.target, ctx, t_cache, 0)
-
-    def verify(n):
-        def f():
-            _l, _c, _ = _forward(pair.target, ctx[:, :n], t_cache, t_ctx)
-            t_cache.crop(t_ctx)
-        return f
-
-    def gap_forward():
-        _dl, _c, _ = _forward(pair.draft, ctx[:, :gap], d_cache, d_ctx)
-        d_cache.crop(d_ctx)
-
-    gap_ms = median_ms(gap_forward)
-    verify0_ms = median_ms(verify(1))
-    verify_ms = {L: median_ms(verify(L + 1)) for L in ACTIONS}
-    eager_ms = {L: median_ms(lambda L=L: eager_draft(L)) for L in ACTIONS}
-    static_ms = {L: median_ms(lambda L=L: static_draft(L)) for L in ACTIONS}
-    eager_per_tok = {L: eager_ms[L] / L for L in ACTIONS}
-    static_per_tok = {L: static_ms[L] / L for L in ACTIONS}
-
     matches = _match_vectors(
         _read_parquet(f"/artifacts/traces/{run_id}/fixed_8/rounds.parquet"))
 
-    def costs_from(draft_ms):
-        c = {0: verify0_ms * 1e6}
+    def headroom_of(costs):
+        r = oracle_policy_value(matches, costs, actions=tuple(sorted(costs)))
+        return r["headroom"] * 100.0, r["best_fixed"][0]
+
+    # One stepper: compile once, re-prefill per prompt (reset() zeros in place so
+    # the captured CUDA graph keeps valid tensor addresses).
+    stepper = StaticDraftStepper(pair.draft, max_cache_len=max_cache_len,
+                                 compile_mode=cmode)
+
+    per_prompt = []  # each: dict of measured cost profile + derived headroom/speedup
+    for pi, ids in enumerate(prompts):
+        ctx = torch.tensor([ids], device=dev)
+
+        d_cache = DynamicCache()
+        d_logits, d_cache, d_ctx = _forward(pair.draft, ctx, d_cache, 0)
+        cur0 = d_logits[0, -1].clone()
+
+        def eager_draft(L):
+            cur = cur0
+            for i in range(L):
+                nxt = greedy_token(cur).view(1, 1)
+                dl, _c, _ = _forward(pair.draft, nxt, d_cache, d_ctx + i)
+                cur = dl[0, -1]
+            d_cache.crop(d_ctx)
+
+        stepper.reset()
+        cur0_s = stepper.prefill(ids)
+
+        def static_draft(L):
+            cur = cur0_s
+            for _ in range(L):
+                nxt = greedy_token(cur)  # 0-dim device tensor: no host sync
+                cur = stepper.step(nxt)
+            stepper.rewind_to_prefill()
+
+        t_cache = DynamicCache()
+        _, t_cache, t_ctx = _forward(pair.target, ctx, t_cache, 0)
+
+        def verify(n):
+            def f():
+                _l, _c, _ = _forward(pair.target, ctx[:, :n], t_cache, t_ctx)
+                t_cache.crop(t_ctx)
+            return f
+
+        def gap_forward():
+            _dl, _c, _ = _forward(pair.draft, ctx[:, :gap], d_cache, d_ctx)
+            d_cache.crop(d_ctx)
+
+        gap_ms = median_ms(gap_forward)
+        verify0_ms = median_ms(verify(1))
+        verify_ms = {L: median_ms(verify(L + 1)) for L in ACTIONS}
+        eager_ms = {L: median_ms(lambda L=L: eager_draft(L)) for L in ACTIONS}
+        static_ms = {L: median_ms(lambda L=L: static_draft(L)) for L in ACTIONS}
+
+        def costs_from(draft_ms):
+            c = {0: verify0_ms * 1e6}
+            for L in ACTIONS:
+                c[L] = (verify_ms[L] + gap_ms + draft_ms[L]) * 1e6
+            return c
+
+        h_eager, bf_eager = headroom_of(costs_from(eager_ms))
+        h_static, bf_static = headroom_of(costs_from(static_ms))
+        rec = {"gap_ms": gap_ms, "verify0_ms": verify0_ms, "verify_ms": verify_ms,
+               "eager_ms": eager_ms, "static_ms": static_ms,
+               "eager_per_tok": {L: eager_ms[L] / L for L in ACTIONS},
+               "static_per_tok": {L: static_ms[L] / L for L in ACTIONS},
+               "speedup": per_token_speedup(eager_ms, static_ms),
+               "headroom_eager": h_eager, "best_fixed_eager": bf_eager,
+               "headroom_static": h_static, "best_fixed_static": bf_static}
+        per_prompt.append(rec)
+        print(f"[prompt {pi + 1}/{len(prompts)}] speedup={rec['speedup']:.2f}x  "
+              f"headroom eager={h_eager:.2f}% (L{bf_eager}) "
+              f"static={h_static:.2f}% (L{bf_static})")
+
+    # ---- aggregate with prompt-level bootstrap CIs ------------------------
+    speedups = [r["speedup"] for r in per_prompt]
+    h_eagers = [r["headroom_eager"] for r in per_prompt]
+    h_statics = [r["headroom_static"] for r in per_prompt]
+    sp_m, sp_lo, sp_hi = bootstrap_mean_ci(speedups, n_boot=n_boot)
+    he_m, he_lo, he_hi = bootstrap_mean_ci(h_eagers, n_boot=n_boot)
+    hs_m, hs_lo, hs_hi = bootstrap_mean_ci(h_statics, n_boot=n_boot)
+
+    def med_over_prompts(key, L=None):
+        xs = [(r[key][L] if L is not None else r[key]) for r in per_prompt]
+        return statistics.median(xs)
+
+    # ---- draft-cost sensitivity grid (median verify/gap, sweep draft cost) --
+    med_verify0 = med_over_prompts("verify0_ms")
+    med_gap = med_over_prompts("gap_ms")
+    med_verify = {L: med_over_prompts("verify_ms", L) for L in ACTIONS}
+    med_static_per_tok = statistics.median(
+        [statistics.mean(r["static_per_tok"].values()) for r in per_prompt])
+    med_eager_per_tok = statistics.median(
+        [statistics.mean(r["eager_per_tok"].values()) for r in per_prompt])
+    grid = [0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0,
+            round(med_static_per_tok, 2), round(med_eager_per_tok, 2)]
+    sensitivity = []
+    for d in sorted(set(grid)):
+        c = {0: med_verify0 * 1e6}
         for L in ACTIONS:
-            c[L] = (verify_ms[L] + gap_ms + draft_ms[L]) * 1e6
-        return c
+            c[L] = (med_verify[L] + med_gap + d * L) * 1e6
+        h, bf = headroom_of(c)
+        sensitivity.append({"draft_ms_per_tok": d, "headroom_pct": round(h, 2),
+                            "best_fixed_L": bf})
 
-    headroom = {}
-    for tag, dms in (("eager", eager_ms), ("static_compiled", static_ms)):
-        r = oracle_policy_value(matches, costs_from(dms), actions=tuple(sorted(costs_from(dms))))
-        headroom[tag] = {"best_fixed_L": r["best_fixed"][0],
-                         "headroom_pct": round(r["headroom"] * 100, 2)}
+    print(f"\n=== I26 aggregate over {len(per_prompt)} prompts @ ctx={context_len}"
+          f", compile={cmode} ===")
+    print(f"draft per-token speedup: {sp_m:.2f}x  CI[{sp_lo:.2f}, {sp_hi:.2f}]")
+    print(f"headroom eager        : {he_m:.2f}%  CI[{he_lo:.2f}, {he_hi:.2f}]"
+          f"  -> {'PROCEED' if he_m >= 5 else 'STOP'}")
+    print(f"headroom static+graph : {hs_m:.2f}%  CI[{hs_lo:.2f}, {hs_hi:.2f}]"
+          f"  -> {'PROCEED' if hs_m >= 5 else 'STOP'}")
+    print("draft-cost sensitivity (median verify/gap):")
+    for s in sensitivity:
+        print(f"  draft={s['draft_ms_per_tok']:>5} ms/tok -> "
+              f"headroom={s['headroom_pct']:>6.2f}%  bestL={s['best_fixed_L']}")
 
-    speedup = (sum(eager_per_tok.values()) / sum(static_per_tok.values())
-               if sum(static_per_tok.values()) else 0.0)
-    print(f"\nctx_len={ctx_len}  compile_mode={cmode}  gap={gap_ms:.2f}ms  "
-          f"verify0={verify0_ms:.2f}ms")
-    print(f"{'L':>3} | {'eager/tok':>9} | {'static/tok':>10} | {'verify':>7}")
-    for L in ACTIONS:
-        print(f"{L:>3} | {eager_per_tok[L]:>9.2f} | {static_per_tok[L]:>10.2f} | "
-              f"{verify_ms[L]:>7.2f}")
-    print(f"\ndraft per-token speedup (eager/static) ~= {speedup:.2f}x")
-    print("=== M3 HEADROOM (sealed fixed_8 labels, measured costs) ===")
-    for tag in ("eager", "static_compiled"):
-        h = headroom[tag]
-        gate = "PROCEED" if h["headroom_pct"] >= 5 else "STOP"
-        print(f"  [{tag:>15}] best_fixed L={h['best_fixed_L']:>2}  "
-              f"headroom={h['headroom_pct']:>6.2f}%  -> {gate}")
-
-    out = {"compile_mode": cmode, "context_len": ctx_len, "n_iter": n_iter,
-           "gap_ms": gap_ms, "verify0_ms": verify0_ms, "verify_ms": verify_ms,
-           "eager_per_tok_ms": eager_per_tok, "static_per_tok_ms": static_per_tok,
-           "draft_per_tok_speedup": speedup, "headroom": headroom}
-    path = f"/artifacts/analysis/{run_id}/i26_bench_static_{cmode or 'eager'}.json"
+    out = {"compile_mode": cmode, "context_len": context_len,
+           "n_prompts": len(per_prompt), "n_iter": n_iter, "n_boot": n_boot,
+           "speedup": {"mean": sp_m, "ci_lo": sp_lo, "ci_hi": sp_hi,
+                       "per_prompt": speedups},
+           "headroom_eager": {"mean": he_m, "ci_lo": he_lo, "ci_hi": he_hi,
+                              "per_prompt": h_eagers},
+           "headroom_static": {"mean": hs_m, "ci_lo": hs_lo, "ci_hi": hs_hi,
+                               "per_prompt": h_statics},
+           "sensitivity": sensitivity, "per_prompt": per_prompt}
+    path = f"/artifacts/analysis/{run_id}/i26_bench_static_{cmode or 'eager'}_ctx{context_len}.json"
     with open(path, "w") as f:
         json.dump(out, f, indent=2, sort_keys=True)
     artifacts.commit()
     print(f"\nwrote {path}")
-    return headroom
+    return {"speedup_mean": sp_m, "headroom_static_mean": hs_m,
+            "headroom_eager_mean": he_m}
 
 
 @app.local_entrypoint()
 def bench_static(run_id: str = "sweep-2026-07-11T203836",
-                 compile_mode: str = "reduce-overhead"):
-    bench_static_draft.remote(run_id, compile_mode=compile_mode)
+                 compile_mode: str = "reduce-overhead", context_len: int = 128,
+                 n_prompts: int = 12):
+    bench_static_draft.remote(run_id, compile_mode=compile_mode,
+                              context_len=context_len, n_prompts=n_prompts)
+
+
+@app.local_entrypoint()
+def bench_static_sweep(run_id: str = "sweep-2026-07-11T203836",
+                       compile_mode: str = "reduce-overhead",
+                       context_lens: str = "64,256,512,1024", n_prompts: int = 12):
+    """Run the multi-prompt static bench across context lengths so the headroom-
+    vs-context curve is script-generated (verify cost grows with context; the
+    static draft stays ~flat, so headroom moves -- this shows how much)."""
+    for cl in [int(x) for x in context_lens.split(",") if x.strip()]:
+        print(f"\n########## context_len={cl} ##########")
+        bench_static_draft.remote(run_id, compile_mode=compile_mode,
+                                  context_len=cl, n_prompts=n_prompts)
 
 
 @app.function(image=image, gpu=GPU, volumes=VOLUMES, timeout=6 * 3600)
