@@ -11,7 +11,49 @@ This is the canonical research repository for a prospective journal submission o
 
 ## Status
 
-**Research contract only.** No experiments have been run in this repository, and it currently makes no empirical claims. Proposed claims are tracked as `UNTESTED` in [the claims ledger](docs/CLAIMS_LEDGER.md).
+**Active research repository with results.** The exact decoding engine, sealed
+trace corpora, baselines, probes, and initial interventions are built and run on
+cloud GPUs; every finding and its evidence level is tracked in
+[the claims ledger](docs/CLAIMS_LEDGER.md). (The earlier "no experiments have been
+run" status is superseded.) Language follows the gate policy below: until targeted
+interventions pass the mechanistic gate (G2), the internal quantity is described as
+a **representation** or **diagnostic signal**, not a "mechanism" or "circuit".
+
+### What has been established (from this repo's sealed, script-generated artifacts)
+
+- **Exact engine.** Greedy speculative decoding proven token-identical to
+  target-only decoding (73/73 full-precision checks). Sealed, checksummed traces:
+  a v1 corpus (644 prompts; ~302k labeled rounds) plus a larger v2 corpus (1,494
+  prompts, 7 task types).
+- **Adaptive draft length wins (RQ2).** A free entropy-based stopping rule beats
+  the best fixed draft length by ~**+11.2%** efficiency (~62% less wasted
+  drafting) on prompt-grouped held-out data, frozen dev→test, across corpora.
+  Bandit-style baselines settle at the best fixed length and do not beat it.
+- **Draft specialization does not help (RQ3).** A same-size general draft ties or
+  beats topic-specialist drafts, even on the specialist's own topic.
+- **Acceptance atlas (supported).** Per-token-category acceptance ranges ~0.52–0.88
+  over ~302k rounds — structural tokens easy, meaning-heavy tokens hard.
+  Latency-independent; frozen-test replicated (category axis), same qualitative
+  picture on both the Qwen and Llama traces.
+- **Pre-round predictability (supported; first-token scope).** Next-round
+  acceptance is predictable from cached verified-context representations *before*
+  any draft compute, at near-zero marginal cost; frozen dev→test transfer under two
+  protocols. Cheap free signals predict acceptance about as well as internal-probe
+  features (internal probing adds at most +0.006).
+
+### In progress / open
+
+- **Systems latency (G3-gated).** Efficiency gains are real; a full end-to-end
+  wall-clock claim is still gated. The harness's small-model step was
+  launch-overhead-bound; a fixed-shape, CUDA-graph draft step (issue I26) cured
+  this on H100 (~**6.2×** faster per token in an initial single-prompt
+  measurement), and replaying at that measured cost the adaptive-length opportunity
+  is ~46% vs ~5% on the old setup. A multi-prompt, bootstrap-CI, context-swept run
+  and the end-to-end controller stopwatch (which needs a lossless fixed-shape
+  rollback path) remain to be done.
+- **Replication** across a second model family (Llama) is wired and tested but
+  blocked on model access; results are currently one family (Qwen).
+- **Manuscript** figures and finalization; full v2-corpus run.
 
 The older `/home/raghavan/13_Raghavan_Content_Aware_Speculation_Control` project is a toolkit and source of ideas. Its smoke metrics, illustrative figures, and draft manuscript are not scientific evidence and must not be copied into results.
 
@@ -56,6 +98,12 @@ Probe accuracy alone is not causal evidence. Negative results and failed interve
 - Keep pre-submission manuscript artifacts anonymous.
 
 ## Seven-day draft milestone
+
+Progress against this milestone is tracked in [the claims ledger](docs/CLAIMS_LEDGER.md):
+items 1–3 and much of 4–6 are substantially complete (engine, baselines, atlas,
+leakage-safe probes, the compute-optimal length rule, initial interventions);
+end-to-end wall-clock validation, cross-family replication, and the final
+manuscript remain open.
 
 1. Build exact target–draft decoding and timing for the primary Qwen pair.
 2. Establish fixed and adaptive baselines and collect the acceptance atlas.
